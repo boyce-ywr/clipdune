@@ -1,0 +1,40 @@
+# 验证状态
+
+核查日期：2026-10-21。开发机：Apple Silicon，Swift 6.4，Command Line Tools，macOS 27 SDK。
+
+## 已执行
+
+- `swift run ClipDuneChecks`：22 个场景、52 个断言通过。覆盖数据库往返、格式保留、去重、中文检索、搜索注入、收藏与清理、容量回滚、备份、权限、隐私标记、应用排除、纯文本与多文件引用。
+- SwiftPM Debug 与 Release 应用编译通过；图标生成的未打包开发入口运行通过；完整 Release `.app` 组装及磁盘签名验证通过。
+- `bash scripts/check-ui.sh development`：普通窗口与原生全屏各 14 项布尔检查通过，均包含 12 次反复唤出、打开即输入、中文检索与原输入焦点归还。
+- GUI 证据来自独立测试宿主与合成剪贴板；真实终端和打包入口仍未验收。
+- 机器结果保存在 `qa/2026-10-21-windowed.json` 与 `qa/2026-10-21-fullscreen.json`，面板截图为 `images/preview.png`，只包含合成演示数据。
+- GitHub 同步目标为 `boyce-ywr/clipdune`，仓库 Private 属性已核查。提交与远端一致性以交付时的 Git 回执为准。
+
+## GUI 验证方法
+
+`bash scripts/check-ui.sh development` 建立独立进程的普通／原生全屏输入宿主，随后运行演示模式面板，检查：
+
+1. 面板可见、属于活动 Space，并能在 WindowServer 的屏幕窗口列表中找到。
+2. show 返回时已聚焦搜索框，稍后焦点仍稳定。
+3. 无鼠标点击输入字符，字段接收正确。
+4. marked text 不被普通快捷键路径截获，中文提交后检索正确。
+5. 连续 12 次收起／唤出均恢复空查询与输入焦点。
+6. 收起后原应用仍在前台，独立宿主验证原输入控件重新获得焦点。
+
+窗口内输入使用合成事件与 NSTextInputClient，不等于实物键盘全局快捷键端到端验收。完整输入法候选操作、真实终端的辅助功能元素和粘贴回执需要分别验证。
+
+## 尚未确认
+
+- 应用包运行：磁盘签名校验通过，但当前机器终止了包内进程。见 `issues/2026-10-21-开发包启动被终止.md`；没有用开发入口的通过替代包验证。
+- Apple Terminal、iTerm2、Ghostty、Warp、IDE 内嵌终端与远程会话。
+- 实际辅助功能授权之后的自动粘贴、权限中途撤回。
+- 双显示器、独立 Space 开关、Stage Manager、长时间持续采集和系统升级。
+- macOS 14 / 15 的实际运行；当前仅设置部署目标，未在这些系统实测。
+- Developer ID 签名、公证、App Sandbox、Mac App Store 审核及品牌审查。
+
+## 已知开发环境限制
+
+当前 CLT 缺少 XCTest；Testing.framework 存在但缺少 TestingMacros 插件。已使用同一组测试逻辑的自包含可执行入口验证，不修改或安装系统工具链。
+
+开发包磁盘签名检查与进程能否启动是不同检查，相关启动受限现象会独立记录，不通过关闭系统安全策略来规避。
