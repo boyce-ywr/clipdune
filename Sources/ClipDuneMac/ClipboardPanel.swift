@@ -4,8 +4,14 @@ import ClipDuneCore
 @MainActor
 public final class OverlayPanel: NSPanel {
     public var handleShortcut: ((NSEvent) -> Bool)?
+    public var handleEvent: ((NSEvent) -> Bool)?
     public override var canBecomeKey: Bool { true }
     public override var canBecomeMain: Bool { false }
+
+    public override func sendEvent(_ event: NSEvent) {
+        if handleEvent?(event) == true { return }
+        super.sendEvent(event)
+    }
 
     public override func performKeyEquivalent(with event: NSEvent) -> Bool {
         if let editor = firstResponder as? NSTextView, editor.hasMarkedText() {
@@ -23,6 +29,7 @@ public final class ClipboardPanelController: NSObject, NSWindowDelegate, NSSearc
     public var onPin: ((ClipSummary) -> Void)?
     public var onPreview: ((ClipSummary) -> Void)?
     public var onDelete: ((ClipSummary) -> Void)?
+    public var onSettings: (() -> Void)?
     public let panel: OverlayPanel
     public let searchField = NSSearchField()
     public private(set) var summaries: [ClipSummary] = []
@@ -61,6 +68,7 @@ public final class ClipboardPanelController: NSObject, NSWindowDelegate, NSSearc
         panel.title = "ClipDune — 拾贴"
         panel.setAccessibilityLabel("ClipDune 剪贴板检索")
         panel.handleShortcut = { [weak self] event in self?.handleShortcut(event) ?? false }
+        panel.handleEvent = { [weak self] event in self?.handlePanelEvent(event) ?? false }
         configureContent()
         spaceObserver = NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.activeSpaceDidChangeNotification,
                                                                           object: nil, queue: .main) { [weak self] _ in
@@ -125,6 +133,19 @@ public final class ClipboardPanelController: NSObject, NSWindowDelegate, NSSearc
     }
 
     public func setStatus(_ status: String) { statusLabel.stringValue = status }
+
+    public func applyAppearance(_ appearance: AppPreferences.Appearance, compactCards: Bool) {
+        switch appearance {
+        case .system: panel.appearance = nil
+        case .light: panel.appearance = NSAppearance(named: .aqua)
+        case .dark: panel.appearance = NSAppearance(named: .darkAqua)
+        }
+        if let layout = collection.collectionViewLayout as? NSCollectionViewFlowLayout {
+            layout.itemSize = NSSize(width: compactCards ? 184 : 222, height: 232)
+            layout.invalidateLayout()
+        }
+        collection.reloadData()
+    }
 
     public func showPreview(_ content: ClipboardContent) {
         let preview = OverlayPanel(contentRect: NSRect(x: panel.frame.midX - 320, y: panel.frame.maxY + 18, width: 640, height: 360),
@@ -258,7 +279,11 @@ public final class ClipboardPanelController: NSObject, NSWindowDelegate, NSSearc
         searchField.sendsWholeSearchString = false
         searchField.setAccessibilityLabel("搜索剪贴板历史")
         searchField.identifier = NSUserInterfaceItemIdentifier("clipdune.search")
-        let header = NSStackView(views: [branding, filter, searchField])
+        let settingsButton = NSButton(image: NSImage(systemSymbolName: "gearshape", accessibilityDescription: "设置")!,
+                                      target: self, action: #selector(showSettings))
+        settingsButton.isBordered = false
+        settingsButton.toolTip = "设置 ⌘,"
+        let header = NSStackView(views: [branding, filter, searchField, settingsButton])
         header.spacing = 22
         header.alignment = .centerY
         searchField.setContentHuggingPriority(.defaultLow, for: .horizontal)
@@ -333,12 +358,41 @@ public final class ClipboardPanelController: NSObject, NSWindowDelegate, NSSearc
         if key == "f" { focusSearch(); return true }
         if key == "p" { pinSelection(); return true }
         if key == "y" { previewSelection(); return true }
+        if key == "," { showSettings(); return true }
         if let number = Int(key), (1...9).contains(number), summaries.indices.contains(number - 1) {
             selectedIndex = number - 1
             choose(plainText: event.modifierFlags.contains(.shift), copyOnly: false)
             return true
         }
         return false
+    }
+
+    private func handlePanelEvent(_ event: NSEvent) -> Bool {
+        guard panel.isKeyWindow else { return false }
+        if event.type == .leftMouseDown, event.clickCount == 2 {
+            let point = collection.convert(event.locationInWindow, from: nil)
+            if collection.visibleRect.contains(point), let indexPath = collection.indexPathForItem(at: point), summaries.indices.contains(indexPath.item) {
+                selectedIndex = indexPath.item
+                selectCurrent()
+                choose(plainText: event.modifierFlags.contains(.shift), copyOnly: event.modifierFlags.contains(.option))
+                return true
+            }
+        }
+        guard event.type == .keyDown, !(panel.firstResponder is NSTextView),
+              !event.modifierFlags.contains(.command), !event.modifierFlags.contains(.control) else { return false }
+        switch event.keyCode {
+        case 53: hide(); return true
+        case 36, 76:
+            choose(plainText: event.modifierFlags.contains(.shift), copyOnly: event.modifierFlags.contains(.option))
+            return true
+        case 123, 126: moveSelection(-1); return true
+        case 124, 125: moveSelection(1); return true
+        case 48, 51, 117, 115, 119, 116, 121: return false
+        default:
+            guard event.characters?.unicodeScalars.contains(where: { $0.value >= 32 && !($0.value >= 0xF700 && $0.value <= 0xF8FF) }) == true || event.characters?.isEmpty == true else { return false }
+            focusSearch()
+            return false
+        }
     }
 
     private func moveSelection(_ offset: Int) {
@@ -364,6 +418,7 @@ public final class ClipboardPanelController: NSObject, NSWindowDelegate, NSSearc
     @objc private func deleteSelection() { if summaries.indices.contains(selectedIndex) { onDelete?(summaries[selectedIndex]) } }
     @objc private func copySelection() { choose(plainText: false, copyOnly: true) }
     @objc private func pasteSelection() { choose(plainText: NSEvent.modifierFlags.contains(.shift), copyOnly: false) }
+    @objc private func showSettings() { onSettings?() }
 }
 
 @MainActor

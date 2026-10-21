@@ -38,10 +38,16 @@ final class HostDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             forName: NSNotification.Name("app.clipdune.qa.focus.\(directory.lastPathComponent)"), object: nil, queue: .main) { [weak self] _ in
                 MainActor.assumeIsolated {
                     guard let self else { return }
-                    let state = ["keyWindow": self.window?.isKeyWindow == true,
-                                 "inputFocused": self.window?.firstResponder === self.textView]
-                    if let data = try? JSONSerialization.data(withJSONObject: state, options: [.sortedKeys]) {
-                        try? data.write(to: self.directory.appendingPathComponent("host-focus.json"), options: .atomic)
+                    Task { @MainActor in
+                        for _ in 0..<20 {
+                            if self.window?.isKeyWindow == true { break }
+                            try? await Task.sleep(for: .milliseconds(25))
+                        }
+                        let state = ["keyWindow": self.window?.isKeyWindow == true,
+                                     "inputFocused": self.window?.firstResponder === self.textView]
+                        if let data = try? JSONSerialization.data(withJSONObject: state, options: [.sortedKeys]) {
+                            try? data.write(to: self.directory.appendingPathComponent("host-focus.json"), options: .atomic)
+                        }
                     }
                 }
             }

@@ -47,6 +47,31 @@ enum UICheck {
                 results["twelveReopenCycles"] = cyclesPassed
                 open()
                 try await Task.sleep(for: .milliseconds(150))
+                if let root = panel.panel.contentView,
+                   let collection = descendants(of: root).compactMap({ $0 as? NSCollectionView }).first {
+                    panel.panel.makeFirstResponder(collection)
+                    results["focusLossReproduced"] = !panel.isSearchFocused
+                    sendKey("x", keyCode: 7, to: panel.panel)
+                    results["typeToSearchFromCards"] = panel.isSearchFocused && panel.query == "x"
+                    panel.searchField.stringValue = ""
+                    panel.onSearch?("", false)
+                    try await Task.sleep(for: .milliseconds(100))
+                    let originalChoose = panel.onChoose
+                    var chosenID: String?
+                    panel.onChoose = { summary, _, copyOnly in
+                        if !copyOnly { chosenID = summary.id }
+                    }
+                    if let item = collection.item(at: IndexPath(item: 0, section: 0)) {
+                        let point = item.view.convert(NSPoint(x: item.view.bounds.midX, y: item.view.bounds.midY), to: nil)
+                        if let event = NSEvent.mouseEvent(with: .leftMouseDown, location: point, modifierFlags: [],
+                                                         timestamp: ProcessInfo.processInfo.systemUptime,
+                                                         windowNumber: number, context: nil, eventNumber: 1, clickCount: 2, pressure: 1) {
+                            panel.panel.sendEvent(event)
+                        }
+                    }
+                    results["doubleClickChoosesPaste"] = chosenID == panel.summaries.first?.id && chosenID != nil
+                    panel.onChoose = originalChoose
+                }
                 if let view = panel.panel.contentView, let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) {
                     view.cacheDisplay(in: view.bounds, to: bitmap)
                     if let image = bitmap.representation(using: .png, properties: [:]) {
@@ -78,6 +103,18 @@ enum UICheck {
         } catch {
             let data = Data("{\"status\":\"failed\",\"reason\":\"QA execution failed\"}".utf8)
             try? data.write(to: directory.appendingPathComponent("ui-check.json"), options: .atomic)
+        }
+    }
+
+    private static func descendants(of view: NSView) -> [NSView] {
+        view.subviews + view.subviews.flatMap { descendants(of: $0) }
+    }
+
+    private static func sendKey(_ characters: String, keyCode: UInt16, to window: NSWindow) {
+        if let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                        windowNumber: window.windowNumber, context: nil, characters: characters,
+                                        charactersIgnoringModifiers: characters, isARepeat: false, keyCode: keyCode) {
+            window.sendEvent(event)
         }
     }
 }

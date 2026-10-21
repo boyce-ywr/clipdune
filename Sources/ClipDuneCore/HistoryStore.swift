@@ -3,7 +3,7 @@ import Foundation
 
 public actor HistoryStore {
     private let database: SQLiteConnection
-    private let limits: HistoryLimits
+    private var limits: HistoryLimits
 
     public init(directory: URL, limits: HistoryLimits = HistoryLimits()) throws {
         self.limits = limits
@@ -134,6 +134,15 @@ public actor HistoryStore {
 
     public func pruneExpired(now: Date = Date()) throws {
         try database.transaction { try prune(now: now, preserving: nil) }
+    }
+
+    public func setRetention(maximumItems: Int, retentionDays: Int) throws {
+        guard (100...50_000).contains(maximumItems), (1...365).contains(retentionDays) else { throw HistoryError.invalidContent }
+        let previous = limits
+        limits.maximumItems = maximumItems
+        limits.retentionDays = retentionDays
+        do { try database.transaction { try prune(now: Date(), preserving: nil) } }
+        catch { limits = previous; throw error }
     }
 
     public func exportArchive() throws -> Data {

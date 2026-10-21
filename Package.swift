@@ -14,6 +14,8 @@ let package = Package(
         .target(name: "ClipDuneMac", dependencies: ["ClipDuneCore"]),
         .executableTarget(name: "ClipDuneApp", dependencies: ["ClipDuneCore", "ClipDuneMac"]),
         .executableTarget(name: "ClipDuneQAHost"),
+        .executableTarget(name: "ClipDuneUpdateHelper", dependencies: ["ClipDuneCore", "ClipDuneMac"]),
+        .executableTarget(name: "ClipDuneReleaseTool", dependencies: ["ClipDuneCore", "ClipDuneMac"]),
         .executableTarget(name: "ClipDuneChecks", dependencies: ["ClipDuneCore", "ClipDuneMac"], path: "Tests/ClipDuneTests")
     ],
     swiftLanguageModes: [.v5]

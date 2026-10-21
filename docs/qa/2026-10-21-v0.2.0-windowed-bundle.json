@@ -1,0 +1,21 @@
+{
+  "activeSpace" : true,
+  "chineseQuery" : true,
+  "chineseSearchResult" : true,
+  "doubleClickChoosesPaste" : true,
+  "focusLossReproduced" : true,
+  "hiddenAfterDismissal" : true,
+  "keyWindow" : true,
+  "markedTextSupported" : true,
+  "originalApplicationPreserved" : true,
+  "originalFieldRestored" : true,
+  "scope" : "WindowServer visibility and synthetic focused-window input; not physical global shortcut or third-party terminal validation",
+  "searchFocusedImmediately" : true,
+  "searchFocusStable" : true,
+  "status" : "passed",
+  "twelveReopenCycles" : true,
+  "typedWithoutClick" : true,
+  "typeToSearchFromCards" : true,
+  "visible" : true,
+  "windowServerOnScreen" : true
+}

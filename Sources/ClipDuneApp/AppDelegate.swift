@@ -26,6 +26,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var qaDirectory: URL?
     private var lastStatus = "正在初始化…"
     private var exclusionList = CapturePolicy.defaultExcludedApplications
+    private var preferences = AppPreferences(defaults: .standard)
+    private var settingsModel: SettingsModel?
+    private var settingsWindow: SettingsWindowController?
+    private var preferencesTask: Task<Void, Never>?
+    private var lastPreferencesVersion = 0
+    private var updater: UpdateController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let arguments = CommandLine.arguments
@@ -33,6 +39,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             qaDirectory = URL(fileURLWithPath: arguments[index + 1], isDirectory: true)
         }
         isDemo = arguments.contains("--demo") || qaDirectory != nil
+        if isDemo { preferences = AppPreferences(defaults: UserDefaults(suiteName: "app.clipdune.demo.\(UUID().uuidString)")!) }
+        exclusionList = preferences.excludedApplications
         if isDemo {
             temporaryDirectory = FileManager.default.temporaryDirectory.appendingPathComponent("clipdune-demo-\(UUID().uuidString)")
             dataDirectory = temporaryDirectory
@@ -43,7 +51,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if let saved = UserDefaults.standard.stringArray(forKey: "excludedApplications") { exclusionList = Set(saved) }
         }
         do {
-            store = try HistoryStore(directory: dataDirectory!)
+            store = try HistoryStore(directory: dataDirectory!, limits: .init(maximumItems: preferences.maximumItems,
+                                                                            retentionDays: preferences.retentionDays))
         } catch {
             showError(error.localizedDescription)
             NSApp.terminate(nil)
@@ -52,6 +61,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         configureMainMenu()
         let controller = ClipboardPanelController()
         panel = controller
+        controller.onSettings = { [weak self] in self?.showSettings() }
+        controller.applyAppearance(preferences.appearance, compactCards: preferences.compactCards)
         controller.onSearch = { [weak self] query, pinned in self?.search(query, pinned: pinned, reset: true) }
         controller.onChoose = { [weak self] summary, plain, copyOnly in self?.choose(summary, plain: plain, copyOnly: copyOnly) }
         controller.onPin = { [weak self] summary in
@@ -82,6 +93,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
         configureStatusMenu()
+        configureSettings()
+        if let settingsModel { updater = UpdateController(model: settingsModel, isDemo: isDemo) }
         if !isDemo {
             let observer = ClipboardMonitor(pasteboard: pasteboard!)
             observer.excludedApplications = exclusionList
@@ -101,10 +114,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             shortcut = GlobalShortcut { [weak self] in self?.togglePanel() }
             let preset = GlobalShortcut.Preset(rawValue: UserDefaults.standard.integer(forKey: "shortcutPreset")) ?? .commandShiftV
             registerShortcut(preset)
+            statusItem?.isVisible = preferences.showsMenuBarIcon
         }
         Task { @MainActor in
             do {
                 try await store?.pruneExpired()
+                if !isDemo { acknowledgeUpdateIfRequested(); updater?.checkAutomaticallyIfDue() }
                 if isDemo {
                     try await seedDemo()
                     setStatus("演示模式 · 不读取真实剪贴板 · 不保存个人数据")
@@ -116,6 +131,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        updater?.stop()
         monitor?.stop()
         shortcut?.unregister()
         panel?.hide()
@@ -123,10 +139,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let temporaryDirectory { try? FileManager.default.removeItem(at: temporaryDirectory) }
     }
 
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        showSettings()
+        return true
+    }
+
+    func applicationDidBecomeActive(_ notification: Notification) {
+        settingsModel?.accessibilityAllowed = PasteDestination.hasPermission
+        settingsModel?.clipboardStatus = monitor?.status ?? lastStatus
+    }
+
     private func configureMainMenu() {
         let menu = NSMenu()
         let appMenu = NSMenu()
         appMenu.addItem(withTitle: "退出 ClipDune", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        let settingsItem = NSMenuItem(title: "设置…", action: #selector(showSettings), keyEquivalent: ",")
+        settingsItem.target = self
+        appMenu.insertItem(settingsItem, at: 0)
         let appItem = NSMenuItem()
         appItem.submenu = appMenu
         menu.addItem(appItem)
@@ -148,6 +177,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem?.button?.toolTip = "ClipDune — 拾贴"
         let menu = NSMenu()
         add("打开 ClipDune", action: #selector(togglePanel), to: menu)
+        add("设置…", action: #selector(showSettings), to: menu)
+        add("检查更新…", action: #selector(showUpdateSettings), to: menu)
         statusMenuItem = add(lastStatus, action: nil, to: menu)
         menu.addItem(.separator())
         pauseMenuItem = add("暂停记录", action: #selector(togglePause), to: menu)
@@ -221,7 +252,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             do {
                 guard let content = try await store?.content(for: summary.id), let panel, let pasteboard,
                       generation == interactionGeneration, panel.isVisible else { return }
-                guard PasteboardCodec.write(content, to: pasteboard, plainText: plain) else {
+                guard PasteboardCodec.write(content, to: pasteboard, plainText: preferences.usesPlainText(shiftHeld: plain)) else {
                     setStatus("未能写入剪贴板，内容仍保留在历史中")
                     return
                 }
@@ -231,10 +262,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 panel.hide()
                 await Task.yield()
                 guard transaction == interactionGeneration else { return }
-                if !copyOnly, !isDemo, target?.pasteIfStillFocused() == true {
-                    showToast("已向原应用发送粘贴")
-                } else {
+                if copyOnly || !preferences.pastesDirectly || isDemo {
                     showToast(isDemo ? "演示复制成功 · 未改动系统剪贴板" : "已复制 · 按 ⌘V 粘贴")
+                    return
+                }
+                guard PasteDestination.hasPermission else {
+                    requestPasteAccess()
+                    showToast("已复制 · 已打开辅助功能设置，授权后再次双击即可直接粘贴")
+                    return
+                }
+                let result = await target?.pasteWhenReady { [weak self] in self?.interactionGeneration != transaction }
+                switch result {
+                case .sent: showToast("已向原应用发送粘贴")
+                case .cancelled: break
+                case .permissionRequired: requestPasteAccess()
+                default: showToast("原输入位置不可用或已切换 · 已复制，可按 ⌘V 粘贴")
                 }
             } catch { setStatus(error.localizedDescription) }
         }
@@ -245,6 +287,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusMenuItem?.title = text
         statusItem?.button?.toolTip = "ClipDune · \(text)"
         panel?.setStatus(text)
+        settingsModel?.clipboardStatus = text
     }
 
     private func registerShortcut(_ preset: GlobalShortcut.Preset) {
@@ -267,30 +310,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func requestClipboardAccess() {
         guard !isDemo else { return }
+        panel?.hide()
         monitor?.requestAccess()
+        SystemSettings.open(.clipboard)
         showToast("在系统设置中将 ClipDune 的剪贴板访问设为始终允许")
     }
 
     @objc private func requestPasteAccess() {
         guard !isDemo else { return }
+        panel?.hide()
         PasteDestination.requestPermission()
+        settingsModel?.accessibilityAllowed = PasteDestination.hasPermission
         showToast(PasteDestination.hasPermission ? "直接粘贴已就绪" : "请在系统设置 → 隐私与安全性中允许辅助功能访问")
     }
 
     @objc private func changeShortcut(_ sender: NSMenuItem) {
         guard let preset = GlobalShortcut.Preset(rawValue: sender.tag), !isDemo else { return }
-        registerShortcut(preset)
+        var updated = preferences
+        updated.shortcutPreset = preset.rawValue
+        applyPreferences(updated, previous: preferences)
         for item in sender.menu?.items ?? [] {
             item.state = item.tag == UserDefaults.standard.integer(forKey: "shortcutPreset") ? .on : .off
         }
     }
 
     @objc private func toggleLogin(_ sender: NSMenuItem) {
-        do {
-            if SMAppService.mainApp.status == .enabled { try SMAppService.mainApp.unregister() }
-            else { try SMAppService.mainApp.register() }
-            sender.state = SMAppService.mainApp.status == .enabled ? .on : .off
-        } catch { showError("无法修改登录启动设置，请将应用放入 Applications 后重试。") }
+        var updated = preferences
+        updated.startsAtLogin = SMAppService.mainApp.status != .enabled
+        applyPreferences(updated, previous: preferences)
+        sender.state = preferences.startsAtLogin ? .on : .off
     }
 
     private func refreshExclusions() {
@@ -324,6 +372,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func saveExclusions() {
         monitor?.excludedApplications = exclusionList
+        preferences.excludedApplications = exclusionList
+        settingsModel?.preferences = preferences
         if !isDemo { UserDefaults.standard.set(exclusionList.sorted(), forKey: "excludedApplications") }
         refreshExclusions()
     }
@@ -379,11 +429,106 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func quit() { NSApp.terminate(nil) }
 
     @objc private func showAbout() {
+        showUpdateSettings()
+    }
+
+    private func configureSettings() {
+        let model = SettingsModel(preferences: preferences)
+        settingsModel = model
+        model.onChange = { [weak self] current, previous in self?.applyPreferences(current, previous: previous) }
+        model.openClipboardPermission = { [weak self] in self?.requestClipboardAccess() }
+        model.openPastePermission = { [weak self] in self?.requestPasteAccess() }
+        model.addExclusion = { [weak self] in self?.addExclusion() }
+        model.exportArchive = { [weak self] in self?.exportHistory() }
+        model.importArchive = { [weak self] in self?.importHistory() }
+        model.clearHistory = { [weak self] in self?.clearHistory() }
+    }
+
+    @objc private func showSettings() {
+        interactionGeneration += 1
         panel?.hide()
-        let alert = NSAlert()
-        alert.messageText = "ClipDune · 拾贴 0.1.0"
-        alert.informativeText = "独立开发的 macOS 剪贴板工具。\n\n本地保存，不联网、不上传、无账号。默认保留 30 天和最多 2,000 条普通历史；收藏不自动过期。内容预算 256 MiB，单项上限 16 MiB。\n\n密码过滤不是绝对保证；请将敏感来源加入排除列表。当前为开发预览版，尚未签名公证或通过商店审核。"
-        alert.runModal()
+        guard let model = settingsModel else { return }
+        if !isDemo {
+            preferences.startsAtLogin = SMAppService.mainApp.status == .enabled
+            model.preferences = preferences
+        }
+        model.accessibilityAllowed = PasteDestination.hasPermission
+        model.clipboardStatus = monitor?.status ?? lastStatus
+        if settingsWindow == nil { settingsWindow = SettingsWindowController(model: model) }
+        settingsWindow?.present()
+    }
+
+    @objc private func showUpdateSettings() {
+        showSettings()
+        settingsWindow?.present(updates: true)
+        settingsModel?.checkUpdates?()
+    }
+
+    private func applyPreferences(_ proposed: AppPreferences, previous: AppPreferences) {
+        var updated = proposed
+        if !isDemo, updated.shortcutPreset != previous.shortcutPreset {
+            guard let preset = GlobalShortcut.Preset(rawValue: updated.shortcutPreset), shortcut?.register(preset) == true else {
+                if let old = GlobalShortcut.Preset(rawValue: previous.shortcutPreset) { _ = shortcut?.register(old) }
+                settingsModel?.preferences = previous
+                showError("这个快捷键已被占用，已保留原快捷键。")
+                return
+            }
+        }
+        if !isDemo, updated.startsAtLogin != previous.startsAtLogin {
+            do {
+                if updated.startsAtLogin { try SMAppService.mainApp.register() }
+                else { try SMAppService.mainApp.unregister() }
+                updated.startsAtLogin = SMAppService.mainApp.status == .enabled
+                if SMAppService.mainApp.status == .requiresApproval { SMAppService.openSystemSettingsLoginItems() }
+            } catch {
+                updated.startsAtLogin = previous.startsAtLogin
+                showError("无法修改登录启动，请将完整应用放入 Applications 后重试。")
+            }
+        }
+        preferences = updated
+        exclusionList = updated.excludedApplications
+        monitor?.excludedApplications = exclusionList
+        refreshExclusions()
+        panel?.applyAppearance(updated.appearance, compactCards: updated.compactCards)
+        if !isDemo { statusItem?.isVisible = updated.showsMenuBarIcon; updated.save(to: .standard) }
+        settingsModel?.preferences = updated
+        if updated.automaticallyChecksUpdates, !previous.automaticallyChecksUpdates { updater?.checkAutomaticallyIfDue() }
+        if updated.pastesDirectly, !previous.pastesDirectly, !PasteDestination.hasPermission { requestPasteAccess() }
+        if updated.maximumItems != previous.maximumItems || updated.retentionDays != previous.retentionDays {
+            lastPreferencesVersion += 1
+            let version = lastPreferencesVersion
+            preferencesTask?.cancel()
+            preferencesTask = Task { @MainActor in
+                do {
+                    try await store?.setRetention(maximumItems: updated.maximumItems, retentionDays: updated.retentionDays)
+                    if version == lastPreferencesVersion { refresh() }
+                } catch {
+                    guard version == lastPreferencesVersion else { return }
+                    preferences.maximumItems = previous.maximumItems
+                    preferences.retentionDays = previous.retentionDays
+                    settingsModel?.preferences = preferences
+                    if !isDemo { preferences.save(to: .standard) }
+                    showError(error.localizedDescription)
+                }
+            }
+        }
+    }
+
+    private func acknowledgeUpdateIfRequested() {
+        let arguments = CommandLine.arguments
+        guard let index = arguments.firstIndex(of: "--updated-confirmation"), arguments.indices.contains(index + 1),
+              let dataDirectory,
+              let statusData = try? Data(contentsOf: dataDirectory.appendingPathComponent("Updates/installation.json")),
+              let status = try? JSONSerialization.jsonObject(with: statusData) as? [String: Any],
+              let build = Int(Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? ""),
+              status["status"] as? String == "awaiting_confirmation", status["build"] as? Int == build,
+              status["receipt"] as? String == arguments[index + 1] else { return }
+        let receipt = URL(fileURLWithPath: arguments[index + 1]).standardizedFileURL
+        guard receipt.deletingLastPathComponent() == dataDirectory.appendingPathComponent("Updates"),
+              receipt.lastPathComponent.hasPrefix("confirmation-") else { return }
+        if let data = try? JSONSerialization.data(withJSONObject: ["status": "ready", "build": build]) {
+            try? data.write(to: receipt, options: .atomic)
+        }
     }
 
     private func showError(_ message: String) {
@@ -448,6 +593,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func runUICheck(directory: URL) async {
         await UICheck.run(panel: panel!, directory: directory, open: { [weak self] in self?.togglePanel() })
+        if let settingsModel {
+            let settings = SettingsWindowController(model: settingsModel)
+            await settings.checkPresentation(directory: directory)
+        }
         NSApp.terminate(nil)
     }
 }

@@ -4,12 +4,15 @@ cd "$(dirname "$0")/.."
 configuration="${1:-debug}"
 case "$configuration" in debug|release) ;; *) echo "用法：$0 [debug|release]" >&2; exit 2 ;; esac
 swift build -c "$configuration" --product ClipDune
+swift build -c "$configuration" --product ClipDuneUpdateHelper
 binary_directory="$(swift build -c "$configuration" --show-bin-path)"
 application="$PWD/dist/ClipDune.app"
-mkdir -p "$application/Contents/MacOS" "$application/Contents/Resources"
+mkdir -p "$application/Contents/MacOS" "$application/Contents/Resources" "$application/Contents/Helpers"
 cp "$binary_directory/ClipDune" "$application/Contents/MacOS/ClipDune.next"
 mv -f "$application/Contents/MacOS/ClipDune.next" "$application/Contents/MacOS/ClipDune"
 cp Resources/Info.plist "$application/Contents/Info.plist"
+cp Resources/UpdatePublicKey.txt "$application/Contents/Resources/UpdatePublicKey.txt"
+cp "$binary_directory/ClipDuneUpdateHelper" "$application/Contents/Helpers/ClipDuneUpdateHelper"
 icon_directory="$(mktemp -d /tmp/clipdune-icon.XXXXXX)"
 trap 'rm -rf "$icon_directory"' EXIT
 mkdir -p "$icon_directory/AppIcon.iconset"
@@ -20,7 +23,8 @@ for size in 16 32 128 256 512; do
     sips -z "$double" "$double" "$icon_directory/source.png" --out "$icon_directory/AppIcon.iconset/icon_${size}x${size}@2x.png" >/dev/null
 done
 iconutil -c icns "$icon_directory/AppIcon.iconset" -o "$application/Contents/Resources/AppIcon.icns"
-codesign --force --sign - --identifier com.github.boyce-ywr.clipdune "$application"
-codesign --verify --strict "$application"
+codesign --force --sign "${CLIPDUNE_SIGN_IDENTITY:--}" "$application/Contents/Helpers/ClipDuneUpdateHelper"
+codesign --force --sign "${CLIPDUNE_SIGN_IDENTITY:--}" --identifier com.github.boyce-ywr.clipdune "$application"
+codesign --verify --deep --strict "$application"
 printf '\n开发预览包：%s\n' "$application"
 printf '安全演示入口：make demo（开发入口，不读取真实剪贴板）\n'

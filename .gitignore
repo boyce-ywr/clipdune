@@ -12,4 +12,7 @@ dist/
 *.sqlite3-shm
 *.sqlite3-wal
 *.clipdunebackup
+*.key
+*.pem
+*.p12
 qa-results/

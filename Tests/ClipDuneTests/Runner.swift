@@ -26,7 +26,19 @@ struct CheckRunner {
             ("富文本与自身写入抑制", { try PasteboardTests().testRichTextRepresentationsArePreservedAndOwnWritesIgnored() }),
             ("纯文本粘贴", { try PasteboardTests().testPlainTextPasteOmitsFormatting() }),
             ("多文件引用保真", { try PasteboardTests().testMultipleFileReferencesStaySeparate() }),
-            ("暂停与隐私策略", { PasteboardTests().testPrivacyPolicyHandlesPauseAndKnownMarkers() })
+            ("暂停与隐私策略", { PasteboardTests().testPrivacyPolicyHandlesPauseAndKnownMarkers() }),
+            ("更新签名拒绝篡改", { try UpdateTests().signatureRejectsTamperingAndWrongKey() }),
+            ("更新包哈希与大小", { try UpdateTests().archiveHashAndLengthAreVerified() }),
+            ("更新系统与架构校验", { try UpdateTests().architectureAndSystemCompatibility() }),
+            ("重定向不泄漏授权", { try UpdateTests().redirectPolicyDoesNotLeakAuthorization() }),
+            ("ZIP 路径与符号链接", { try UpdateTests().zipEntriesRejectTraversalAndSymlinks() }),
+            ("原子替换与回滚", { try UpdateTests().atomicSwapAndRollbackPreserveBothVersions() }),
+            ("重启失败触发安装事务回滚", { try UpdateTests().failedRelaunchRollsBackThroughProductionTransaction() }),
+            ("安装事务保留旧版本", { try UpdateTests().successfulTransactionPreservesOldApplicationAsBackup() }),
+            ("设置持久化与格式切换", { try UpdateTests().preferencesRoundTripAndPasteOverride() }),
+            ("拒绝错误粘贴目标", { try UpdateTests().destinationPolicyRejectsWrongApplicationsAndWindows() }),
+            ("系统权限页定位", { try UpdateTests().permissionURLsTargetCorrectPanes() }),
+            ("Release 资产选择", { try UpdateTests().releaseMetadataRequiresUniqueAssets() })
         ]
         for (name, check) in checks {
             let previous = CheckResults.shared.failures
