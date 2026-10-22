@@ -629,6 +629,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ])], text: "产品发布检查\n签名、下载、启动与回滚分别验证。", kind: .html, sourceName: "Safari", sourceBundleID: "com.apple.Safari")
         let yesterday = Calendar.current.date(byAdding: .day, value: -1, to: Date())!
         try await store?.record(html, at: yesterday)
+        if qaDirectory != nil {
+            for index in 1...48 {
+                let text = "横向滚动测试记录 \(index)"
+                let entry = ClipboardContent(fragments: [.init(representations: [.init(type: "public.utf8-plain-text", data: Data(text.utf8))])],
+                                             text: text, kind: .text, sourceName: "测试宿主", sourceBundleID: "app.clipdune.fixture")
+                try await store?.record(entry, at: Date().addingTimeInterval(-Double(3_600 + index)))
+            }
+        }
         if let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 240, pixelsHigh: 144, bitsPerSample: 8,
                                          samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
                                          colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0),

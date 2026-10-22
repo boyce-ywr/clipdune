@@ -40,6 +40,7 @@ public final class ClipboardPanelController: NSObject, NSWindowDelegate, NSSearc
     private let typeFilter = NSPopUpButton()
     private let timeFilter = NSPopUpButton()
     private let clearFilters = NSButton()
+    private let latestButton = NSButton()
     private var pinButton: NSButton?
     private var sourceIcons: [String: NSImage] = [:]
     private let statusLabel = NSTextField(labelWithString: "仅保存在这台 Mac")
@@ -106,6 +107,8 @@ public final class ClipboardPanelController: NSObject, NSWindowDelegate, NSSearc
         let screen = NSScreen.screens.first(where: { $0.frame.contains(mouse) }) ?? NSScreen.main
         let available = screen?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1_200, height: 800)
         panel.setFrame(Self.frame(on: available), display: true)
+        selectCurrent(scrollIntoView: false)
+        scrollToBeginning()
         panel.orderFrontRegardless()
         panel.makeKey()
         focusSearch()
@@ -146,7 +149,8 @@ public final class ClipboardPanelController: NSObject, NSWindowDelegate, NSSearc
         emptyLabel.stringValue = query.isEmpty && searchFilter == HistoryFilter() ? "你的下一次复制，会出现在这里。\n无需整理，随时找回。" : "没有找到匹配内容\n试试调整关键词、类型或时间筛选。"
         countLabel.stringValue = results.isEmpty ? "" : (results.count == 200 ? "最近 200 项 · 可继续搜索" : "\(results.count) 项")
         buttons.forEach { $0.isEnabled = !results.isEmpty }
-        selectCurrent()
+        selectCurrent(scrollIntoView: !resetSelection)
+        if resetSelection { scrollToBeginning() }
     }
 
     public func setStatus(_ status: String) { statusLabel.stringValue = status }
@@ -380,9 +384,18 @@ public final class ClipboardPanelController: NSObject, NSWindowDelegate, NSSearc
         let delete = NSButton(title: "删除", target: self, action: #selector(deleteSelection))
         let paste = NSButton(title: "粘贴 ↩", target: self, action: #selector(pasteSelection))
         paste.bezelColor = NSColor.systemTeal
-        buttons = [delete, pin, rename, preview, copy, paste]
+        latestButton.title = "回到最新"
+        latestButton.image = NSImage(systemSymbolName: "arrow.left.to.line", accessibilityDescription: "回到最新")
+        latestButton.imagePosition = .imageLeading
+        latestButton.target = self
+        latestButton.action = #selector(returnToLatest)
+        latestButton.identifier = NSUserInterfaceItemIdentifier("clipdune.returnToLatest")
+        latestButton.isEnabled = false
+        latestButton.toolTip = "回到当前结果最左侧并选中最新项，保留关键词与筛选条件"
+        latestButton.setAccessibilityLabel("回到最新")
+        buttons = [latestButton, delete, pin, rename, preview, copy, paste]
         buttons.forEach { $0.bezelStyle = .rounded; $0.controlSize = .small }
-        let actions = NSStackView(views: [delete, pin, rename, preview, copy, paste])
+        let actions = NSStackView(views: [latestButton, delete, pin, rename, preview, copy, paste])
         actions.spacing = 8
         let footer = NSStackView(views: [statusLabel, countLabel, actions])
         footer.spacing = 16
@@ -465,12 +478,27 @@ public final class ClipboardPanelController: NSObject, NSWindowDelegate, NSSearc
         selectCurrent()
     }
 
-    private func selectCurrent() {
+    private func selectCurrent(scrollIntoView: Bool = true) {
         updateSelectionActions()
         guard summaries.indices.contains(selectedIndex) else { return }
         let selection: Set<IndexPath> = [IndexPath(item: selectedIndex, section: 0)]
         collection.selectionIndexPaths = selection
-        collection.scrollToItems(at: selection, scrollPosition: .nearestHorizontalEdge)
+        if scrollIntoView { collection.scrollToItems(at: selection, scrollPosition: .nearestHorizontalEdge) }
+    }
+
+    private func scrollToBeginning() {
+        panel.contentView?.layoutSubtreeIfNeeded()
+        collection.layoutSubtreeIfNeeded()
+        let clip = scrollView.contentView
+        clip.scroll(to: NSPoint(x: 0, y: clip.bounds.minY))
+        scrollView.reflectScrolledClipView(clip)
+    }
+
+    @objc private func returnToLatest() {
+        selectedIndex = 0
+        selectCurrent(scrollIntoView: false)
+        scrollToBeginning()
+        focusSearch()
     }
 
     private func updateSelectionActions() {
