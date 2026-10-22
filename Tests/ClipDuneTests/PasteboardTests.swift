@@ -31,7 +31,7 @@ final class PasteboardTests {
         item.setString("<strong>hello</strong>", forType: .html)
         pasteboard.writeObjects([item])
         let content = try requireValue(PasteboardCodec.read(pasteboard, sourceName: "Fixture", sourceBundleID: "test", excludedApplications: []))
-        expectEqual(content.kind, .richText)
+        expectEqual(content.kind, .html)
         expectEqual(content.fragments[0].representations.count, 2)
         expectTrue(PasteboardCodec.write(content, to: pasteboard, plainText: false))
         expectEqual(pasteboard.string(forType: .html), "<strong>hello</strong>")

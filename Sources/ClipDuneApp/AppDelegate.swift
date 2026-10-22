@@ -65,6 +65,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         controller.applyAppearance(preferences.appearance, compactCards: preferences.compactCards)
         controller.onSearch = { [weak self] query, pinned in self?.search(query, pinned: pinned, reset: true) }
         controller.onChoose = { [weak self] summary, plain, copyOnly in self?.choose(summary, plain: plain, copyOnly: copyOnly) }
+        controller.onRename = { [weak self] summary in self?.rename(summary) }
         controller.onPin = { [weak self] summary in
             Task { @MainActor in
                 guard let self, let store = self.store else { return }
@@ -230,13 +231,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func search(_ query: String, pinned: Bool, reset: Bool) {
         searchGeneration += 1
         let generation = searchGeneration
+        let filter = panel?.searchFilter ?? HistoryFilter()
         Task { @MainActor in
             guard let store else { return }
             do {
-                let results = try await store.search(query, pinnedOnly: pinned)
+                let results = try await store.search(query, pinnedOnly: pinned, filter: filter)
                 guard generation == searchGeneration else { return }
                 panel?.update(results, resetSelection: reset)
             } catch { setStatus(error.localizedDescription) }
+        }
+    }
+
+    private func rename(_ summary: ClipSummary) {
+        guard let panel, panel.isVisible, panel.panel.attachedSheet == nil else { return }
+        let alert = NSAlert()
+        alert.messageText = "重命名粘贴项"
+        alert.informativeText = "最多 120 个字符。名称可用于搜索，历史与收藏同步显示；不会修改原内容。清空名称可恢复默认显示。"
+        alert.addButton(withTitle: "保存")
+        alert.addButton(withTitle: "取消")
+        let field = NSTextField(string: summary.userTitle)
+        field.placeholderString = "例如：每周汇报模板"
+        field.identifier = NSUserInterfaceItemIdentifier("clipdune.rename.title")
+        field.frame = NSRect(x: 0, y: 0, width: 340, height: 26)
+        alert.accessoryView = field
+        alert.window.initialFirstResponder = field
+        alert.beginSheetModal(for: panel.panel) { [weak self] response in
+            guard let self else { return }
+            guard response == .alertFirstButtonReturn else { self.panel?.focusSearch(); return }
+            let title = field.stringValue
+            Task { @MainActor in
+                do {
+                    try await self.store?.rename(summary.id, title: title)
+                    self.refresh()
+                    self.panel?.focusSearch()
+                } catch { self.showError(error.localizedDescription) }
+            }
         }
     }
 
@@ -583,10 +612,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             ("ClipDune\n拾贴\n\n随手复制，随时找回。", .text, "欢迎")
         ]
         for (index, example) in examples.enumerated() {
+            let bundleIDs = ["com.apple.Notes", "com.apple.Safari", "com.apple.Terminal", "com.apple.TextEdit", "com.apple.Terminal", "app.clipdune.fixture"]
             let content = ClipboardContent(fragments: [.init(representations: [.init(type: NSPasteboard.PasteboardType.string.rawValue, data: Data(example.0.utf8))])],
-                                           text: example.0, kind: example.1, sourceName: example.2, sourceBundleID: "app.clipdune.fixture")
+                                           text: example.0, kind: example.1, sourceName: example.2, sourceBundleID: bundleIDs[index])
             if let identity = try await store?.record(content, at: Date().addingTimeInterval(Double(index) * -120)), index == 0 {
                 try await store?.setPinned(true, for: identity)
+            }
+        }
+        let color = ClipboardContent(fragments: [.init(representations: [.init(type: "public.utf8-plain-text", data: Data("#37B5AA".utf8))])],
+                                     text: "#37B5AA", kind: .color, sourceName: "调色板", sourceBundleID: "com.apple.Preview")
+        try await store?.record(color, at: Date().addingTimeInterval(-60))
+        let markup = "<h1>产品发布检查</h1><p>签名、下载、启动与回滚分别验证。</p>"
+        let html = ClipboardContent(fragments: [.init(representations: [
+            .init(type: "public.html", data: Data(markup.utf8)),
+            .init(type: "public.utf8-plain-text", data: Data("产品发布检查\n签名、下载、启动与回滚分别验证。".utf8))
+        ])], text: "产品发布检查\n签名、下载、启动与回滚分别验证。", kind: .html, sourceName: "Safari", sourceBundleID: "com.apple.Safari")
+        let yesterday = Calendar.current.date(byAdding: .day, value: -1, to: Date())!
+        try await store?.record(html, at: yesterday)
+        if let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 240, pixelsHigh: 144, bitsPerSample: 8,
+                                         samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+                                         colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0),
+           let context = NSGraphicsContext(bitmapImageRep: bitmap) {
+            NSGraphicsContext.saveGraphicsState()
+            NSGraphicsContext.current = context
+            NSColor(srgbRed: 0.06, green: 0.2, blue: 0.24, alpha: 1).setFill()
+            NSBezierPath(rect: NSRect(x: 0, y: 0, width: 240, height: 144)).fill()
+            NSColor.systemTeal.setFill()
+            NSBezierPath(roundedRect: NSRect(x: 26, y: 30, width: 80, height: 90), xRadius: 12, yRadius: 12).fill()
+            NSColor.white.setFill()
+            NSBezierPath(roundedRect: NSRect(x: 72, y: 24, width: 80, height: 90), xRadius: 12, yRadius: 12).fill()
+            ("ClipDune" as NSString).draw(at: NSPoint(x: 154, y: 58), withAttributes: [.font: NSFont.systemFont(ofSize: 15, weight: .semibold), .foregroundColor: NSColor.white])
+            NSGraphicsContext.restoreGraphicsState()
+            if let png = bitmap.representation(using: .png, properties: [:]) {
+                let image = ClipboardContent(fragments: [.init(representations: [.init(type: "public.png", data: png)])],
+                                             text: "", kind: .image, sourceName: "预览", sourceBundleID: "com.apple.Preview", thumbnail: png)
+                try await store?.record(image, at: Date().addingTimeInterval(-180))
             }
         }
     }

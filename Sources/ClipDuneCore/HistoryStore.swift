@@ -45,7 +45,20 @@ public actor HistoryStore {
                 END
                 """)
             try database.execute("PRAGMA user_version=1")
+            try database.execute("""
+                CREATE TABLE IF NOT EXISTS clip_details (
+                    id TEXT PRIMARY KEY, user_title TEXT NOT NULL DEFAULT '', kind TEXT NOT NULL,
+                    source_bundle TEXT NOT NULL, content_bytes INTEGER NOT NULL, fragment_count INTEGER NOT NULL
+                )
+                """)
+            try database.execute("CREATE INDEX IF NOT EXISTS details_kind ON clip_details(kind)")
+            try database.execute("""
+                CREATE TRIGGER IF NOT EXISTS details_delete AFTER DELETE ON clips BEGIN
+                    DELETE FROM clip_details WHERE id=old.id;
+                END
+                """)
         }
+        try Self.backfillDetails(database)
         self.database = database
     }
 
@@ -66,7 +79,8 @@ public actor HistoryStore {
             SQLiteConnection.text($0, 0)
         }.first
         let identity = existing ?? UUID().uuidString
-        let searchText = normalize(content.text + "\n" + content.sourceName)
+        let title = try database.rows("SELECT user_title FROM clip_details WHERE id=?", [.text(identity)]) { SQLiteConnection.text($0, 0) }.first ?? ""
+        let searchText = normalize(content.text + "\n" + content.sourceName + "\n" + title)
         if existing != nil {
             try database.execute("""
                 UPDATE clips SET copied_at=?,text=?,source_name=?,search_text=?,payload=?,thumbnail=?,byte_count=? WHERE id=?
@@ -76,16 +90,27 @@ public actor HistoryStore {
         } else {
             try database.execute("INSERT INTO clips VALUES(?,?,?,?,?,?,?,0,?,?,?)", [
                 .text(identity), .text(hash), .real(date.timeIntervalSince1970), .text(content.text),
-                .text(content.kind.rawValue), .text(content.sourceName), .text(searchText),
+                .text(content.kind.legacyKind.rawValue), .text(content.sourceName), .text(searchText),
                 .integer(Int64(payload.count + (content.thumbnail?.count ?? 0))), .blob(payload), content.thumbnail.map(SQLValue.blob) ?? .null
             ])
         }
+        try database.execute("""
+            INSERT INTO clip_details(id,kind,source_bundle,content_bytes,fragment_count) VALUES(?,?,?,?,?)
+            ON CONFLICT(id) DO UPDATE SET kind=excluded.kind,source_bundle=excluded.source_bundle,
+                content_bytes=excluded.content_bytes,fragment_count=excluded.fragment_count
+            """, [.text(identity), .text(content.kind.rawValue), .text(content.sourceBundleID),
+                   .integer(Int64(content.contentByteCount)), .integer(Int64(content.objectCount))])
         return identity
     }
 
-    public func search(_ query: String = "", pinnedOnly: Bool = false, limit: Int = 200) throws -> [ClipSummary] {
+    public func search(_ query: String = "", pinnedOnly: Bool = false, limit: Int = 200,
+                       filter: HistoryFilter = HistoryFilter(), now: Date = Date(), calendar: Calendar = .current) throws -> [ClipSummary] {
         let query = normalize(query.trimmingCharacters(in: .whitespacesAndNewlines))
-        var sql = "SELECT clips.id,text,kind,source_name,copied_at,pinned,thumbnail FROM clips"
+        var sql = """
+            SELECT clips.id,text,clip_details.kind,source_name,copied_at,pinned,thumbnail,
+                user_title,source_bundle,content_bytes,fragment_count FROM clips
+            JOIN clip_details ON clip_details.id=clips.id
+            """
         var bindings: [SQLValue] = []
         if query.count >= 3 {
             sql += " JOIN clip_search ON clip_search.item_id=clips.id WHERE clip_search MATCH ?"
@@ -97,6 +122,11 @@ public actor HistoryStore {
             sql += " WHERE 1=1"
         }
         if pinnedOnly { sql += " AND pinned=1" }
+        if let kind = filter.kind { sql += " AND clip_details.kind=?"; bindings.append(.text(kind.rawValue)) }
+        if let range = filter.dateRange(now: now, calendar: calendar) {
+            sql += " AND copied_at>=? AND copied_at<?"
+            bindings += [.real(range.start.timeIntervalSince1970), .real(range.end.timeIntervalSince1970)]
+        }
         sql += " ORDER BY copied_at DESC, clips.rowid DESC LIMIT ?"
         bindings.append(.integer(Int64(max(1, min(limit, 2_000)))))
         return try database.rows(sql, bindings) { statement in
@@ -105,7 +135,9 @@ public actor HistoryStore {
                         sourceName: SQLiteConnection.text(statement, 3),
                         copiedAt: Date(timeIntervalSince1970: sqlite3_column_double(statement, 4)),
                         isPinned: sqlite3_column_int(statement, 5) != 0,
-                        thumbnail: SQLiteConnection.data(statement, 6))
+                        thumbnail: SQLiteConnection.data(statement, 6), userTitle: SQLiteConnection.text(statement, 7),
+                        sourceBundleID: SQLiteConnection.text(statement, 8), contentBytes: Int(sqlite3_column_int64(statement, 9)),
+                        fragmentCount: Int(sqlite3_column_int(statement, 10)))
         }
     }
 
@@ -121,6 +153,29 @@ public actor HistoryStore {
             try database.execute("UPDATE clips SET pinned=? WHERE id=?", [.integer(pinned ? 1 : 0), .text(identity)])
             try prune(now: Date(), preserving: nil)
         }
+    }
+
+    public func rename(_ identity: String, title: String) throws {
+        let title = try Self.validTitle(title)
+        try database.transaction { try updateTitle(identity, title: title) }
+    }
+
+    private func updateTitle(_ identity: String, title: String) throws {
+        let parts = try database.rows("SELECT text,source_name FROM clips WHERE id=?", [.text(identity)]) {
+            (SQLiteConnection.text($0, 0), SQLiteConnection.text($0, 1))
+        }.first
+        guard let parts else { return }
+        try database.execute("UPDATE clip_details SET user_title=? WHERE id=?", [.text(title), .text(identity)])
+        try database.execute("UPDATE clips SET search_text=? WHERE id=?",
+                             [.text(normalize(parts.0 + "\n" + parts.1 + "\n" + title)), .text(identity)])
+    }
+
+    private static func validTitle(_ value: String) throws -> String {
+        let title = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard title.count <= 120, !title.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains) else {
+            throw HistoryError.invalidTitle
+        }
+        return title
     }
 
     public func delete(_ identity: String) throws {
@@ -146,11 +201,11 @@ public actor HistoryStore {
     }
 
     public func exportArchive() throws -> Data {
-        let entries = try database.rows("SELECT payload,copied_at,pinned FROM clips ORDER BY copied_at", []) { statement in
+        let entries = try database.rows("SELECT payload,copied_at,pinned,user_title FROM clips JOIN clip_details ON clips.id=clip_details.id ORDER BY copied_at", []) { statement in
             guard let payload = SQLiteConnection.data(statement, 0) else { throw HistoryError.invalidContent }
             return Archive.Entry(content: try JSONDecoder().decode(ClipboardContent.self, from: payload),
                                  copiedAt: Date(timeIntervalSince1970: sqlite3_column_double(statement, 1)),
-                                 pinned: sqlite3_column_int(statement, 2) != 0)
+                                 pinned: sqlite3_column_int(statement, 2) != 0, userTitle: SQLiteConnection.text(statement, 3))
         }
         return try JSONEncoder().encode(Archive(version: 1, entries: entries))
     }
@@ -174,6 +229,7 @@ public actor HistoryStore {
         }
         for entry in entries {
             try entry.content.validate(maximumBytes: limits.maximumItemBytes)
+            if let title = entry.userTitle { _ = try Self.validTitle(title) }
             guard entry.copiedAt.timeIntervalSince1970.isFinite,
                   entry.copiedAt <= Date().addingTimeInterval(300) else { throw HistoryError.invalidContent }
         }
@@ -181,6 +237,7 @@ public actor HistoryStore {
             for entry in entries {
                 let identity = try upsert(entry.content, at: entry.copiedAt)
                 if entry.pinned { try database.execute("UPDATE clips SET pinned=1 WHERE id=?", [.text(identity)]) }
+                if let title = entry.userTitle { try updateTitle(identity, title: Self.validTitle(title)) }
             }
             try prune(now: Date(), preserving: nil)
             return entries.count
@@ -189,6 +246,26 @@ public actor HistoryStore {
 
     private func normalize(_ text: String) -> String {
         text.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: Locale(identifier: "en_US_POSIX"))
+    }
+
+    private static func backfillDetails(_ database: SQLiteConnection) throws {
+        while true {
+            let rows = try database.rows("""
+                SELECT id,payload FROM clips WHERE NOT EXISTS(SELECT 1 FROM clip_details WHERE clip_details.id=clips.id) LIMIT 16
+                """) { statement in
+                    (SQLiteConnection.text(statement, 0), SQLiteConnection.data(statement, 1))
+                }
+            if rows.isEmpty { return }
+            try database.transaction {
+                for (identity, payload) in rows {
+                    guard let payload else { throw HistoryError.invalidContent }
+                    let content = try JSONDecoder().decode(ClipboardContent.self, from: payload)
+                    try database.execute("INSERT INTO clip_details(id,kind,source_bundle,content_bytes,fragment_count) VALUES(?,?,?,?,?)",
+                                         [.text(identity), .text(content.kind.rawValue), .text(content.sourceBundleID),
+                                          .integer(Int64(content.contentByteCount)), .integer(Int64(content.objectCount))])
+                }
+            }
+        }
     }
 
     private func prune(now: Date, preserving identity: String?) throws {
@@ -217,6 +294,7 @@ private struct Archive: Codable {
         let content: ClipboardContent
         let copiedAt: Date
         let pinned: Bool
+        let userTitle: String?
     }
     let version: Int
     let entries: [Entry]

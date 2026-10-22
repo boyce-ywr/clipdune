@@ -38,7 +38,19 @@ struct CheckRunner {
             ("设置持久化与格式切换", { try UpdateTests().preferencesRoundTripAndPasteOverride() }),
             ("拒绝错误粘贴目标", { try UpdateTests().destinationPolicyRejectsWrongApplicationsAndWindows() }),
             ("系统权限页定位", { try UpdateTests().permissionURLsTargetCorrectPanes() }),
-            ("Release 资产选择", { try UpdateTests().releaseMetadataRequiresUniqueAssets() })
+            ("Release 资产选择", { try UpdateTests().releaseMetadataRequiresUniqueAssets() }),
+            ("重命名检索与收藏去重", { try await CardMetadataTests().renameSearchPinDuplicateAndReopen() }),
+            ("重命名校验与注入防护", { try await CardMetadataTests().rejectsInvalidTitlesWithoutMutatingData() }),
+            ("名称类型时间收藏组合检索", { try await CardMetadataTests().combinedTypeDateNameAndPinFilters() }),
+            ("时间筛选时区与夏令时", { CardMetadataTests().calendarFiltersRespectDSTAndHalfOpenBounds() }),
+            ("名称备份与旧归档兼容", { try await CardMetadataTests().namedArchiveRoundTripAndLegacyImport() }),
+            ("旧数据库回填与删除一致性", { try await CardMetadataTests().backfillsOldRowsAndKeepsLegacySchemaWritable() }),
+            ("新类型旧载荷兼容", { try CardMetadataTests().newKindsKeepLegacyPayloadReadable() }),
+            ("八种类型与原始表示往返", { try CardMetadataTests().codecHandlesEightKindsAndOpaqueBytes() }),
+            ("字符数图片数据量文件引用数", { try await CardMetadataTests().summaryShowsCharactersImageBytesAndFileCount() }),
+            ("八种内容类型独立筛选", { try await CardMetadataTests().everyKindIsIndependentlySearchable() }),
+            ("旧版本载荷和写入语句兼容", { try await CardMetadataTests().oldVersionCanReadPayloadAndInsertOriginalSchema() }),
+            ("面板宽屏和负坐标显示器", { CardMetadataTests().panelUsesScreenWidthWithSmallSafeInsets() })
         ]
         for (name, check) in checks {
             let previous = CheckResults.shared.failures

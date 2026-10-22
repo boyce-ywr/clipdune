@@ -72,6 +72,8 @@ enum UICheck {
                     results["doubleClickChoosesPaste"] = chosenID == panel.summaries.first?.id && chosenID != nil
                     panel.onChoose = originalChoose
                 }
+                let cardResults = try await CardUICheck.run(panel: panel, directory: directory)
+                for (name, passed) in cardResults { results[name] = passed }
                 if let view = panel.panel.contentView, let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) {
                     view.cacheDisplay(in: view.bounds, to: bitmap)
                     if let image = bitmap.representation(using: .png, properties: [:]) {

@@ -30,12 +30,18 @@ public final class ClipboardPanelController: NSObject, NSWindowDelegate, NSSearc
     public var onPreview: ((ClipSummary) -> Void)?
     public var onDelete: ((ClipSummary) -> Void)?
     public var onSettings: (() -> Void)?
+    public var onRename: ((ClipSummary) -> Void)?
     public let panel: OverlayPanel
     public let searchField = NSSearchField()
     public private(set) var summaries: [ClipSummary] = []
     private let collection = NSCollectionView()
     private let scrollView = NSScrollView()
     private let filter = NSSegmentedControl(labels: ["历史", "收藏"], trackingMode: .selectOne, target: nil, action: nil)
+    private let typeFilter = NSPopUpButton()
+    private let timeFilter = NSPopUpButton()
+    private let clearFilters = NSButton()
+    private var pinButton: NSButton?
+    private var sourceIcons: [String: NSImage] = [:]
     private let statusLabel = NSTextField(labelWithString: "仅保存在这台 Mac")
     private let countLabel = NSTextField(labelWithString: "")
     private let emptyLabel = NSTextField(wrappingLabelWithString: "你的下一次复制，会出现在这里。\n无需整理，随时找回。")
@@ -50,6 +56,16 @@ public final class ClipboardPanelController: NSObject, NSWindowDelegate, NSSearc
     public var isSearchFocused: Bool { panel.firstResponder === searchField.currentEditor() && searchField.currentEditor() != nil }
     public var query: String { searchField.stringValue }
     public var pinnedOnly: Bool { filter.selectedSegment == 1 }
+    public var searchFilter: HistoryFilter {
+        HistoryFilter(kind: typeFilter.indexOfSelectedItem > 0 ? ClipKind.allCases[typeFilter.indexOfSelectedItem - 1] : nil,
+                      period: HistoryFilter.Period.allCases[max(0, timeFilter.indexOfSelectedItem)])
+    }
+
+    public static func frame(on visibleFrame: NSRect) -> NSRect {
+        let inset = min(16, visibleFrame.width / 20)
+        return NSRect(x: visibleFrame.minX + inset, y: visibleFrame.minY + 18,
+                      width: visibleFrame.width - inset * 2, height: min(382, visibleFrame.height - 40))
+    }
 
     public override init() {
         panel = OverlayPanel(contentRect: NSRect(x: 0, y: 0, width: 1_060, height: 382),
@@ -82,13 +98,14 @@ public final class ClipboardPanelController: NSObject, NSWindowDelegate, NSSearc
         let session = generation
         searchField.stringValue = ""
         filter.selectedSegment = 0
+        typeFilter.selectItem(at: 0)
+        timeFilter.selectItem(at: 0)
+        clearFilters.isEnabled = false
         selectedIndex = 0
         let mouse = NSEvent.mouseLocation
         let screen = NSScreen.screens.first(where: { $0.frame.contains(mouse) }) ?? NSScreen.main
         let available = screen?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1_200, height: 800)
-        let width = min(1_140, available.width - 32)
-        let height = min(382, available.height - 40)
-        panel.setFrame(NSRect(x: available.midX - width / 2, y: available.minY + 18, width: width, height: height), display: true)
+        panel.setFrame(Self.frame(on: available), display: true)
         panel.orderFrontRegardless()
         panel.makeKey()
         focusSearch()
@@ -112,7 +129,7 @@ public final class ClipboardPanelController: NSObject, NSWindowDelegate, NSSearc
     }
 
     public func focusSearch() {
-        guard panel.isVisible else { return }
+        guard panel.isVisible, panel.attachedSheet == nil else { return }
         panel.makeFirstResponder(searchField)
         if let editor = searchField.currentEditor() as? NSTextView {
             editor.setSelectedRange(NSRange(location: (searchField.stringValue as NSString).length, length: 0))
@@ -126,7 +143,7 @@ public final class ClipboardPanelController: NSObject, NSWindowDelegate, NSSearc
         else { selectedIndex = selectedID.flatMap { identity in results.firstIndex(where: { $0.id == identity }) } ?? 0 }
         collection.reloadData()
         emptyLabel.isHidden = !results.isEmpty
-        emptyLabel.stringValue = query.isEmpty ? "你的下一次复制，会出现在这里。\n无需整理，随时找回。" : "没有找到匹配内容\n试试更短的关键词或来源应用名。"
+        emptyLabel.stringValue = query.isEmpty && searchFilter == HistoryFilter() ? "你的下一次复制，会出现在这里。\n无需整理，随时找回。" : "没有找到匹配内容\n试试调整关键词、类型或时间筛选。"
         countLabel.stringValue = results.isEmpty ? "" : (results.count == 200 ? "最近 200 项 · 可继续搜索" : "\(results.count) 项")
         buttons.forEach { $0.isEnabled = !results.isEmpty }
         selectCurrent()
@@ -156,7 +173,7 @@ public final class ClipboardPanelController: NSObject, NSWindowDelegate, NSSearc
         preview.isReleasedWhenClosed = false
         preview.delegate = self
         if content.kind == .image, let data = content.fragments.flatMap(\.representations).first(where: {
-            [NSPasteboard.PasteboardType.png.rawValue, NSPasteboard.PasteboardType.tiff.rawValue].contains($0.type)
+            ["public.png", "public.tiff", "public.jpeg", "com.compuserve.gif", "public.heic"].contains($0.type)
         })?.data, let image = NSImage(data: data) {
             let imageView = NSImageView(frame: preview.contentView!.bounds)
             imageView.image = image
@@ -171,7 +188,8 @@ public final class ClipboardPanelController: NSObject, NSWindowDelegate, NSSearc
             text.isEditable = false
             text.isSelectable = true
             text.font = .monospacedSystemFont(ofSize: 14, weight: .regular)
-            text.string = content.text
+            text.string = content.text.isEmpty ? "\(content.kind.title) · \(ByteCountFormatter.string(fromByteCount: Int64(content.contentByteCount), countStyle: .file))\n\n" +
+                content.fragments.flatMap(\.representations).map(\.type).joined(separator: "\n") : content.text
             text.textContainerInset = NSSize(width: 16, height: 16)
             text.autoresizingMask = [.width]
             text.textContainer?.widthTracksTextView = true
@@ -200,7 +218,7 @@ public final class ClipboardPanelController: NSObject, NSWindowDelegate, NSSearc
     public func windowDidResignKey(_ notification: Notification) {
         guard notification.object as? NSWindow === panel else { return }
         DispatchQueue.main.async { [weak self] in
-            guard let self, !self.panel.isKeyWindow, self.previewWindow?.isVisible != true else { return }
+            guard let self, !self.panel.isKeyWindow, self.previewWindow?.isVisible != true, self.panel.attachedSheet == nil else { return }
             self.hide()
         }
     }
@@ -235,16 +253,37 @@ public final class ClipboardPanelController: NSObject, NSWindowDelegate, NSSearc
 
     public func collectionView(_ collectionView: NSCollectionView, itemForRepresentedObjectAt indexPath: IndexPath) -> NSCollectionViewItem {
         let item = collectionView.makeItem(withIdentifier: NSUserInterfaceItemIdentifier("clip"), for: indexPath) as! ClipCard
-        item.configure(summaries[indexPath.item], number: indexPath.item + 1)
-        item.onDoubleClick = { [weak self] in
-            self?.selectedIndex = indexPath.item
-            self?.choose(plainText: NSEvent.modifierFlags.contains(.shift), copyOnly: false)
+        let summary = summaries[indexPath.item]
+        item.configure(summary, number: indexPath.item + 1, sourceIcon: icon(for: summary.sourceBundleID))
+        item.onAction = { [weak self] action in
+            guard let self, let current = self.summaries.firstIndex(where: { $0.id == summary.id }) else { return }
+            self.selectedIndex = current
+            self.selectCurrent()
+            switch action {
+            case .pin: self.pinSelection()
+            case .rename: self.renameSelection()
+            case .preview: self.previewSelection()
+            case .copy: self.copySelection()
+            case .paste: self.pasteSelection()
+            case .alternateFormat: self.choose(plainText: true, copyOnly: false)
+            case .delete: self.deleteSelection()
+            }
         }
         return item
     }
 
     public func collectionView(_ collectionView: NSCollectionView, didSelectItemsAt indexPaths: Set<IndexPath>) {
-        if let index = indexPaths.first?.item { selectedIndex = index }
+        if let index = indexPaths.first?.item { selectedIndex = index; updateSelectionActions() }
+    }
+
+    private func icon(for bundleID: String) -> NSImage {
+        if let cached = sourceIcons[bundleID] { return cached }
+        let image: NSImage
+        if !bundleID.isEmpty, let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) {
+            image = NSWorkspace.shared.icon(forFile: url.path)
+        } else { image = NSImage(systemSymbolName: "app.dashed", accessibilityDescription: "来源应用未安装")! }
+        if sourceIcons.count < 256 { sourceIcons[bundleID] = image }
+        return image
     }
 
     private func configureContent() {
@@ -279,12 +318,30 @@ public final class ClipboardPanelController: NSObject, NSWindowDelegate, NSSearc
         searchField.sendsWholeSearchString = false
         searchField.setAccessibilityLabel("搜索剪贴板历史")
         searchField.identifier = NSUserInterfaceItemIdentifier("clipdune.search")
+        typeFilter.addItems(withTitles: ["全部类型"] + ClipKind.allCases.map(\.title))
+        timeFilter.addItems(withTitles: HistoryFilter.Period.allCases.map(\.title))
+        typeFilter.identifier = NSUserInterfaceItemIdentifier("clipdune.filter.type")
+        timeFilter.identifier = NSUserInterfaceItemIdentifier("clipdune.filter.time")
+        typeFilter.setAccessibilityLabel("按内容类型筛选")
+        timeFilter.setAccessibilityLabel("按复制时间筛选")
+        for picker in [typeFilter, timeFilter] {
+            picker.target = self
+            picker.action = #selector(changeSearchFilter)
+            picker.controlSize = .small
+        }
+        clearFilters.image = NSImage(systemSymbolName: "line.3.horizontal.decrease.circle", accessibilityDescription: "清除类型和时间筛选")
+        clearFilters.target = self
+        clearFilters.action = #selector(resetSearchFilters)
+        clearFilters.isBordered = false
+        clearFilters.isEnabled = false
+        clearFilters.toolTip = "清除类型和时间筛选，保留关键词"
+        clearFilters.identifier = NSUserInterfaceItemIdentifier("clipdune.filter.clear")
         let settingsButton = NSButton(image: NSImage(systemSymbolName: "gearshape", accessibilityDescription: "设置")!,
                                       target: self, action: #selector(showSettings))
         settingsButton.isBordered = false
         settingsButton.toolTip = "设置 ⌘,"
-        let header = NSStackView(views: [branding, filter, searchField, settingsButton])
-        header.spacing = 22
+        let header = NSStackView(views: [branding, filter, searchField, typeFilter, timeFilter, clearFilters, settingsButton])
+        header.spacing = 12
         header.alignment = .centerY
         searchField.setContentHuggingPriority(.defaultLow, for: .horizontal)
         searchField.widthAnchor.constraint(greaterThanOrEqualToConstant: 180).isActive = true
@@ -316,14 +373,16 @@ public final class ClipboardPanelController: NSObject, NSWindowDelegate, NSSearc
         countLabel.font = .systemFont(ofSize: 11)
         countLabel.textColor = .tertiaryLabelColor
         let pin = NSButton(title: "收藏 ⌘P", target: self, action: #selector(pinSelection))
+        pinButton = pin
+        let rename = NSButton(title: "重命名 ⌘R", target: self, action: #selector(renameSelection))
         let preview = NSButton(title: "预览 ⌘Y", target: self, action: #selector(previewSelection))
         let copy = NSButton(title: "复制 ⌥↩", target: self, action: #selector(copySelection))
         let delete = NSButton(title: "删除", target: self, action: #selector(deleteSelection))
         let paste = NSButton(title: "粘贴 ↩", target: self, action: #selector(pasteSelection))
         paste.bezelColor = NSColor.systemTeal
-        buttons = [delete, pin, preview, copy, paste]
+        buttons = [delete, pin, rename, preview, copy, paste]
         buttons.forEach { $0.bezelStyle = .rounded; $0.controlSize = .small }
-        let actions = NSStackView(views: [delete, pin, preview, copy, paste])
+        let actions = NSStackView(views: [delete, pin, rename, preview, copy, paste])
         actions.spacing = 8
         let footer = NSStackView(views: [statusLabel, countLabel, actions])
         footer.spacing = 16
@@ -357,6 +416,7 @@ public final class ClipboardPanelController: NSObject, NSWindowDelegate, NSSearc
         guard event.modifierFlags.contains(.command), let key = event.charactersIgnoringModifiers?.lowercased() else { return false }
         if key == "f" { focusSearch(); return true }
         if key == "p" { pinSelection(); return true }
+        if key == "r" { renameSelection(); return true }
         if key == "y" { previewSelection(); return true }
         if key == "," { showSettings(); return true }
         if let number = Int(key), (1...9).contains(number), summaries.indices.contains(number - 1) {
@@ -368,8 +428,13 @@ public final class ClipboardPanelController: NSObject, NSWindowDelegate, NSSearc
     }
 
     private func handlePanelEvent(_ event: NSEvent) -> Bool {
-        guard panel.isKeyWindow else { return false }
+        guard panel.isKeyWindow, panel.attachedSheet == nil else { return false }
         if event.type == .leftMouseDown, event.clickCount == 2 {
+            var hit = panel.contentView?.hitTest(event.locationInWindow)
+            while let view = hit {
+                if view is NSButton { return false }
+                hit = view.superview
+            }
             let point = collection.convert(event.locationInWindow, from: nil)
             if collection.visibleRect.contains(point), let indexPath = collection.indexPathForItem(at: point), summaries.indices.contains(indexPath.item) {
                 selectedIndex = indexPath.item
@@ -401,10 +466,27 @@ public final class ClipboardPanelController: NSObject, NSWindowDelegate, NSSearc
     }
 
     private func selectCurrent() {
+        updateSelectionActions()
         guard summaries.indices.contains(selectedIndex) else { return }
         let selection: Set<IndexPath> = [IndexPath(item: selectedIndex, section: 0)]
         collection.selectionIndexPaths = selection
         collection.scrollToItems(at: selection, scrollPosition: .nearestHorizontalEdge)
+    }
+
+    private func updateSelectionActions() {
+        pinButton?.title = summaries.indices.contains(selectedIndex) && summaries[selectedIndex].isPinned ? "取消收藏 ⌘P" : "收藏 ⌘P"
+    }
+
+    @objc private func changeSearchFilter() {
+        clearFilters.isEnabled = searchFilter != HistoryFilter()
+        onSearch?(query, pinnedOnly)
+        focusSearch()
+    }
+
+    @objc private func resetSearchFilters() {
+        typeFilter.selectItem(at: 0)
+        timeFilter.selectItem(at: 0)
+        changeSearchFilter()
     }
 
     private func choose(plainText: Bool, copyOnly: Bool) {
@@ -414,96 +496,10 @@ public final class ClipboardPanelController: NSObject, NSWindowDelegate, NSSearc
 
     @objc private func changeFilter() { onSearch?(query, pinnedOnly); focusSearch() }
     @objc private func pinSelection() { if summaries.indices.contains(selectedIndex) { onPin?(summaries[selectedIndex]) } }
+    @objc private func renameSelection() { if summaries.indices.contains(selectedIndex) { onRename?(summaries[selectedIndex]) } }
     @objc private func previewSelection() { if summaries.indices.contains(selectedIndex) { onPreview?(summaries[selectedIndex]) } }
     @objc private func deleteSelection() { if summaries.indices.contains(selectedIndex) { onDelete?(summaries[selectedIndex]) } }
     @objc private func copySelection() { choose(plainText: false, copyOnly: true) }
     @objc private func pasteSelection() { choose(plainText: NSEvent.modifierFlags.contains(.shift), copyOnly: false) }
     @objc private func showSettings() { onSettings?() }
-}
-
-@MainActor
-private final class CardSurface: NSView {
-    var onDoubleClick: (() -> Void)?
-    override func mouseDown(with event: NSEvent) {
-        if event.clickCount == 2 { onDoubleClick?() }
-        else { super.mouseDown(with: event) }
-    }
-}
-
-@MainActor
-private final class ClipCard: NSCollectionViewItem {
-    private let source = NSTextField(labelWithString: "")
-    private let content = NSTextField(wrappingLabelWithString: "")
-    private let caption = NSTextField(labelWithString: "")
-    private let picture = NSImageView()
-    var onDoubleClick: (() -> Void)?
-
-    override var isSelected: Bool {
-        didSet { updateAppearance() }
-    }
-
-    override func loadView() {
-        let surface = CardSurface()
-        surface.wantsLayer = true
-        surface.layer?.cornerRadius = 12
-        surface.onDoubleClick = { [weak self] in self?.onDoubleClick?() }
-        view = surface
-        source.font = .systemFont(ofSize: 11, weight: .semibold)
-        source.textColor = .systemTeal
-        source.lineBreakMode = .byTruncatingTail
-        content.font = .systemFont(ofSize: 13)
-        content.maximumNumberOfLines = 9
-        content.lineBreakMode = .byWordWrapping
-        content.cell?.wraps = true
-        content.cell?.usesSingleLineMode = false
-        caption.font = .systemFont(ofSize: 10)
-        caption.textColor = .secondaryLabelColor
-        caption.lineBreakMode = .byTruncatingTail
-        picture.imageScaling = .scaleProportionallyUpOrDown
-        [source, content, caption, picture].forEach { $0.translatesAutoresizingMaskIntoConstraints = false; view.addSubview($0) }
-        NSLayoutConstraint.activate([
-            source.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 15),
-            source.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -15),
-            source.topAnchor.constraint(equalTo: view.topAnchor, constant: 14),
-            content.leadingAnchor.constraint(equalTo: source.leadingAnchor),
-            content.trailingAnchor.constraint(equalTo: source.trailingAnchor),
-            content.topAnchor.constraint(equalTo: source.bottomAnchor, constant: 14),
-            content.bottomAnchor.constraint(lessThanOrEqualTo: caption.topAnchor, constant: -12),
-            picture.leadingAnchor.constraint(equalTo: content.leadingAnchor),
-            picture.trailingAnchor.constraint(equalTo: content.trailingAnchor),
-            picture.topAnchor.constraint(equalTo: content.topAnchor),
-            picture.bottomAnchor.constraint(equalTo: caption.topAnchor, constant: -12),
-            caption.leadingAnchor.constraint(equalTo: source.leadingAnchor),
-            caption.trailingAnchor.constraint(equalTo: source.trailingAnchor),
-            caption.bottomAnchor.constraint(equalTo: view.bottomAnchor, constant: -14)
-        ])
-        updateAppearance()
-    }
-
-    func configure(_ summary: ClipSummary, number: Int) {
-        let kind: String
-        switch summary.kind {
-        case .text: kind = "文本"
-        case .link: kind = "链接"
-        case .image: kind = "图片"
-        case .richText: kind = "富文本"
-        case .files: kind = "文件"
-        }
-        source.stringValue = "\(summary.isPinned ? "★  " : "")\(kind)  ·  \(summary.sourceName)"
-        content.stringValue = String(summary.text.prefix(600))
-        let formatter = RelativeDateTimeFormatter()
-        formatter.locale = Locale(identifier: "zh_CN")
-        formatter.unitsStyle = .short
-        caption.stringValue = "\(number < 10 ? "⌘\(number)   ·   " : "")\(formatter.localizedString(for: summary.copiedAt, relativeTo: Date()))"
-        picture.image = summary.thumbnail.flatMap(NSImage.init(data:))
-        picture.isHidden = picture.image == nil
-        content.isHidden = !picture.isHidden
-        view.setAccessibilityLabel("\(kind)，\(summary.sourceName)，\(String(summary.text.prefix(80)))")
-    }
-
-    private func updateAppearance() {
-        view.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
-        view.layer?.borderWidth = isSelected ? 2 : 1
-        view.layer?.borderColor = (isSelected ? NSColor.systemTeal : NSColor.separatorColor.withAlphaComponent(0.45)).cgColor
-    }
 }
