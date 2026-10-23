@@ -52,6 +52,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         do {
             store = try HistoryStore(directory: dataDirectory!, limits: .init(maximumItems: preferences.maximumItems,
+                                                                            maximumBytes: preferences.maximumStorageBytes,
                                                                             retentionDays: preferences.retentionDays))
         } catch {
             showError(error.localizedDescription)
@@ -106,6 +107,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     guard let self, let store = self.store else { return }
                     do {
                         try await store.record(content, at: copiedAt)
+                        self.setStatus(self.monitor?.status ?? "正在本地记录")
                         self.refresh()
                     } catch { self.setStatus(error.localizedDescription) }
                 }
@@ -270,6 +272,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func refresh() {
+        if settingsWindow?.window?.isVisible == true { refreshStorageUsage() }
         guard let panel, panel.isVisible else { return }
         search(panel.query, pinned: panel.pinnedOnly, reset: false)
     }
@@ -286,9 +289,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     return
                 }
                 monitor?.skipCurrentChange()
+                let usedAt = Date()
                 interactionGeneration += 1
                 let transaction = interactionGeneration
                 panel.hide()
+                do { try await store?.recordUse(of: summary.id, at: usedAt) }
+                catch { setStatus("内容已复制，但最近使用时间保存失败。") }
                 await Task.yield()
                 guard transaction == interactionGeneration else { return }
                 if copyOnly || !preferences.pastesDirectly || isDemo {
@@ -302,7 +308,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
                 let result = await target?.pasteWhenReady { [weak self] in self?.interactionGeneration != transaction }
                 switch result {
-                case .sent: showToast("已向原应用发送粘贴")
+                case .sent:
+                    do { try await store?.recordUse(of: summary.id) }
+                    catch { setStatus("粘贴已发送，但最近使用时间保存失败。") }
+                    showToast("已向原应用发送粘贴")
                 case .cancelled: break
                 case .permissionRequired: requestPasteAccess()
                 default: showToast("原输入位置不可用或已切换 · 已复制，可按 ⌘V 粘贴")
@@ -433,7 +442,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 try data.write(to: url, options: .atomic)
                 try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
                 showToast("本地备份已导出")
-            } catch { showError("备份导出失败，请检查目标目录权限与空间。") }
+            } catch { showError(error.localizedDescription) }
         }
     }
 
@@ -441,7 +450,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         panel?.hide()
         let picker = NSOpenPanel()
         picker.allowedContentTypes = [UTType(filenameExtension: "clipdunebackup") ?? .data]
-        picker.message = "仅导入你信任的 ClipDune 备份。排除应用与敏感标记规则仍然生效；已有内容不会被清空。"
+        picker.message = "仅导入你信任的 ClipDune 备份（最大 384 MiB）。排除与敏感标记规则仍生效；合并后按最近使用清理超限普通历史，收藏不会自动删除。"
         guard picker.runModal() == .OK, let url = picker.url else { return }
         let exclusions = exclusionList
         Task { @MainActor in
@@ -471,6 +480,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         model.exportArchive = { [weak self] in self?.exportHistory() }
         model.importArchive = { [weak self] in self?.importHistory() }
         model.clearHistory = { [weak self] in self?.clearHistory() }
+        model.onStorageLimitChange = { [weak self] in self?.changeStorageLimit(to: $0) }
+    }
+
+    private func refreshStorageUsage() {
+        Task { @MainActor in
+            settingsModel?.storageUsage = try? await store?.storageUsage()
+        }
+    }
+
+    private func changeStorageLimit(to maximumMiB: Int) {
+        guard let model = settingsModel, let store, !model.storageBusy,
+              AppPreferences.storageOptionsMiB.contains(maximumMiB), maximumMiB != preferences.maximumStorageMiB else { return }
+        model.storageBusy = true
+        Task { @MainActor in
+            defer { model.storageBusy = false }
+            do {
+                let usage = try await store.storageUsage()
+                let maximumBytes = maximumMiB * 1024 * 1024
+                if maximumMiB < preferences.maximumStorageMiB {
+                    let alert = NSAlert()
+                    alert.messageText = "将存储容量上限降至 \(maximumMiB) MiB？"
+                    alert.informativeText = "当前已用 \(ByteCountFormatter.string(fromByteCount: Int64(usage.totalBytes), countStyle: .binary))。超限时会先删除最久未使用的普通历史，且无法撤销；收藏不会自动删除。若收藏超过新上限，将保留原设置和全部内容。"
+                    alert.addButton(withTitle: "取消")
+                    alert.addButton(withTitle: "降低上限")
+                    guard alert.runModal() == .alertSecondButtonReturn else { return }
+                }
+                try await store.setMaximumBytes(maximumBytes)
+                preferences.maximumStorageMiB = maximumMiB
+                model.preferences.maximumStorageMiB = maximumMiB
+                if !isDemo { preferences.save(to: .standard) }
+                model.storageUsage = try? await store.storageUsage()
+                setStatus(monitor?.status ?? lastStatus)
+                refresh()
+            } catch { showError(error.localizedDescription) }
+        }
     }
 
     @objc private func showSettings() {
@@ -483,6 +527,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         model.accessibilityAllowed = PasteDestination.hasPermission
         model.clipboardStatus = monitor?.status ?? lastStatus
+        refreshStorageUsage()
         if settingsWindow == nil { settingsWindow = SettingsWindowController(model: model) }
         settingsWindow?.present()
     }
@@ -662,6 +707,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func runUICheck(directory: URL) async {
         await UICheck.run(panel: panel!, directory: directory, open: { [weak self] in self?.togglePanel() })
         if let settingsModel {
+            settingsModel.storageUsage = try? await store?.storageUsage()
             let settings = SettingsWindowController(model: settingsModel)
             await settings.checkPresentation(directory: directory)
         }

@@ -13,7 +13,10 @@ final class SettingsModel: ObservableObject {
     @Published var updateProgress: Double?
     @Published var tokenPresent = false
     @Published var tokenDraft = ""
+    @Published var storageUsage: HistoryStorageUsage?
+    @Published var storageBusy = false
     var onChange: ((AppPreferences, AppPreferences) -> Void)?
+    var onStorageLimitChange: ((Int) -> Void)?
     var openClipboardPermission: (() -> Void)?
     var openPastePermission: (() -> Void)?
     var addExclusion: (() -> Void)?
@@ -45,8 +48,10 @@ final class SettingsModel: ObservableObject {
 @MainActor
 final class SettingsWindowController: NSWindowController {
     private let tabs = NSTabViewController()
+    private let model: SettingsModel
 
     init(model: SettingsModel) {
+        self.model = model
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 700, height: 590),
                               styleMask: [.titled, .closable], backing: .buffered, defer: false)
         super.init(window: window)
@@ -98,7 +103,10 @@ final class SettingsWindowController: NSWindowController {
                 screenshots += 1
             }
         }
-        let result: [String: Any] = ["pages": screenshots, "status": screenshots == 5 ? "passed" : "failed"]
+        let storageChecks = await StorageSettingsUICheck.run(model: model)
+        var result: [String: Any] = storageChecks
+        result["pages"] = screenshots
+        result["status"] = screenshots == 5 && storageChecks.values.allSatisfy { $0 } ? "passed" : "failed"
         if let data = try? JSONSerialization.data(withJSONObject: result, options: [.prettyPrinted, .sortedKeys]) {
             try? data.write(to: directory.appendingPathComponent("settings-check.json"), options: .atomic)
         }
@@ -117,9 +125,18 @@ private struct GeneralSettings: View {
                 Picker("普通历史保留天数", selection: model.binding(\.retentionDays)) {
                     ForEach([7, 30, 90, 365], id: \.self) { Text("\($0) 天").tag($0) }
                 }
+                Picker("总存储容量上限", selection: Binding(get: { model.preferences.maximumStorageMiB }, set: { model.onStorageLimitChange?($0) })) {
+                    ForEach(AppPreferences.storageOptionsMiB, id: \.self) { value in
+                        Text(value >= 1_024 ? "\(value / 1_024) GiB" : "\(value) MiB").tag(value)
+                    }
+                }.disabled(model.storageBusy)
+                if let usage = model.storageUsage {
+                    Text("已用 \(ByteCountFormatter.string(fromByteCount: Int64(usage.totalBytes), countStyle: .binary)) · 收藏占用 \(ByteCountFormatter.string(fromByteCount: Int64(usage.pinnedBytes), countStyle: .binary))")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
                 Toggle("登录时启动", isOn: model.binding(\.startsAtLogin))
                 Toggle("在菜单栏中显示图标", isOn: model.binding(\.showsMenuBarIcon))
-            } footer: { Text("收藏不自动过期。减少上限会清理旧的普通历史；关闭图标后可通过快捷键或重新打开应用进入设置。") }
+            } footer: { Text("普通历史按最近使用时间保留和清理；收藏计入容量但不自动删除。降低容量前会确认。容量统计原始内容与缩略图，不含数据库开销；完整备份另限 384 MiB。") }
             Section("粘贴") {
                 Toggle("始终以纯文本粘贴", isOn: model.binding(\.alwaysPastePlainText))
                 Text("粘贴时按住 Shift，可对本次粘贴切换格式。")

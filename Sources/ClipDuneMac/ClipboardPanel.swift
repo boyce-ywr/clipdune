@@ -327,7 +327,8 @@ public final class ClipboardPanelController: NSObject, NSWindowDelegate, NSSearc
         typeFilter.identifier = NSUserInterfaceItemIdentifier("clipdune.filter.type")
         timeFilter.identifier = NSUserInterfaceItemIdentifier("clipdune.filter.time")
         typeFilter.setAccessibilityLabel("按内容类型筛选")
-        timeFilter.setAccessibilityLabel("按复制时间筛选")
+        timeFilter.setAccessibilityLabel("按最近使用时间筛选")
+        timeFilter.toolTip = "按最近一次复制或在 ClipDune 中使用的时间筛选"
         for picker in [typeFilter, timeFilter] {
             picker.target = self
             picker.action = #selector(changeSearchFilter)

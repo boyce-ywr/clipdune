@@ -5,6 +5,16 @@ struct CheckRunner {
     @MainActor
     static func main() async {
         let checks: [(String, @MainActor () async throws -> Void)] = [
+            ("使用前移且保留原文与采集时间", { try await HistoryActivityTests().successfulUseMovesWithoutChangingContentOrCaptureTime() }),
+            ("去重保留不同粘贴格式", { try await HistoryActivityTests().deduplicationRetainsFormattingDifferences() }),
+            ("时间筛选与过期依据最近使用", { try await HistoryActivityTests().filtersAndExpirationUseRecentActivity() }),
+            ("降容清理最久未使用且保护收藏", { try await HistoryActivityTests().capacityEvictsLeastRecentlyUsedAndProtectsPins() }),
+            ("降容和新增失败完整回滚", { try await HistoryActivityTests().rejectedReductionAndCaptureRollBack() }),
+            ("条数清理依据最近使用", { try await HistoryActivityTests().countLimitAlsoUsesRecentActivity() }),
+            ("最近使用备份重开且不被旧备份倒退", { try await HistoryActivityTests().archiveAndReopenPreserveRecencyWithoutRewinding() }),
+            ("旧数据库活动回填与旧版写入兼容", { try await HistoryActivityTests().legacyDatabaseBackfillsAndLegacyWriterUpdatesActivity() }),
+            ("容量偏好持久化与异常值回退", { try HistoryActivityTests().storagePreferencesPersistAndRejectInvalidValues() }),
+            ("旧备份兼容与异常活动和超大备份拒绝", { try await HistoryActivityTests().legacyAndInvalidActivityArchivesAreHandledSafely() }),
             ("存储与重开保真", { try await HistoryStoreTests().testPersistsAndReopensWithoutLosingRepresentations() }),
             ("去重与收藏状态", { try await HistoryStoreTests().testDuplicateMovesToFrontAndPreservesPin() }),
             ("中文与全文搜索", { try await HistoryStoreTests().testShortChineseAndTrigramSearch() }),

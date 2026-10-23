@@ -151,8 +151,8 @@ final class ClipCard: NSCollectionViewItem {
         let formatter = RelativeDateTimeFormatter()
         formatter.locale = Locale(identifier: "zh_CN")
         formatter.unitsStyle = .short
-        caption.stringValue = formatter.localizedString(for: summary.copiedAt, relativeTo: Date())
-        caption.toolTip = "\(number < 10 ? "⌘\(number) · " : "")\(summary.copiedAt.formatted())"
+        caption.stringValue = formatter.localizedString(for: summary.lastUsedAt, relativeTo: Date())
+        caption.toolTip = "\(number < 10 ? "⌘\(number) · " : "")最近使用：\(summary.lastUsedAt.formatted())\n最近采集：\(summary.copiedAt.formatted())"
         pin.image = NSImage(systemSymbolName: summary.isPinned ? "star.fill" : "star", accessibilityDescription: summary.isPinned ? "取消收藏" : "收藏")
         pin.contentTintColor = summary.isPinned ? .systemYellow : .secondaryLabelColor
         pin.toolTip = summary.isPinned ? "取消收藏 · ⌘P" : "收藏 · ⌘P"

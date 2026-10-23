@@ -57,6 +57,28 @@ public actor HistoryStore {
                     DELETE FROM clip_details WHERE id=old.id;
                 END
                 """)
+            try database.execute("CREATE TABLE IF NOT EXISTS clip_activity (id TEXT PRIMARY KEY, last_used_at REAL NOT NULL)")
+            try database.execute("CREATE INDEX IF NOT EXISTS activity_recent ON clip_activity(last_used_at DESC)")
+            try database.execute("""
+                CREATE TRIGGER IF NOT EXISTS activity_insert AFTER INSERT ON clips BEGIN
+                    INSERT INTO clip_activity(id,last_used_at) VALUES(new.id,new.copied_at);
+                END
+                """)
+            try database.execute("""
+                CREATE TRIGGER IF NOT EXISTS activity_copy AFTER UPDATE OF copied_at ON clips BEGIN
+                    INSERT INTO clip_activity(id,last_used_at) VALUES(new.id,new.copied_at)
+                    ON CONFLICT(id) DO UPDATE SET last_used_at=MAX(last_used_at,excluded.last_used_at);
+                END
+                """)
+            try database.execute("""
+                CREATE TRIGGER IF NOT EXISTS activity_delete AFTER DELETE ON clips BEGIN
+                    DELETE FROM clip_activity WHERE id=old.id;
+                END
+                """)
+            try database.execute("""
+                INSERT INTO clip_activity(id,last_used_at) SELECT id,copied_at FROM clips
+                WHERE NOT EXISTS(SELECT 1 FROM clip_activity WHERE clip_activity.id=clips.id)
+                """)
         }
         try Self.backfillDetails(database)
         self.database = database
@@ -83,7 +105,7 @@ public actor HistoryStore {
         let searchText = normalize(content.text + "\n" + content.sourceName + "\n" + title)
         if existing != nil {
             try database.execute("""
-                UPDATE clips SET copied_at=?,text=?,source_name=?,search_text=?,payload=?,thumbnail=?,byte_count=? WHERE id=?
+                UPDATE clips SET copied_at=MAX(copied_at,?),text=?,source_name=?,search_text=?,payload=?,thumbnail=?,byte_count=? WHERE id=?
                 """, [.real(date.timeIntervalSince1970), .text(content.text), .text(content.sourceName),
                        .text(searchText), .blob(payload), content.thumbnail.map(SQLValue.blob) ?? .null,
                        .integer(Int64(payload.count + (content.thumbnail?.count ?? 0))), .text(identity)])
@@ -108,8 +130,9 @@ public actor HistoryStore {
         let query = normalize(query.trimmingCharacters(in: .whitespacesAndNewlines))
         var sql = """
             SELECT clips.id,text,clip_details.kind,source_name,copied_at,pinned,thumbnail,
-                user_title,source_bundle,content_bytes,fragment_count FROM clips
+                user_title,source_bundle,content_bytes,fragment_count,last_used_at FROM clips
             JOIN clip_details ON clip_details.id=clips.id
+            JOIN clip_activity ON clip_activity.id=clips.id
             """
         var bindings: [SQLValue] = []
         if query.count >= 3 {
@@ -124,16 +147,17 @@ public actor HistoryStore {
         if pinnedOnly { sql += " AND pinned=1" }
         if let kind = filter.kind { sql += " AND clip_details.kind=?"; bindings.append(.text(kind.rawValue)) }
         if let range = filter.dateRange(now: now, calendar: calendar) {
-            sql += " AND copied_at>=? AND copied_at<?"
+            sql += " AND last_used_at>=? AND last_used_at<?"
             bindings += [.real(range.start.timeIntervalSince1970), .real(range.end.timeIntervalSince1970)]
         }
-        sql += " ORDER BY copied_at DESC, clips.rowid DESC LIMIT ?"
+        sql += " ORDER BY last_used_at DESC, clips.rowid DESC LIMIT ?"
         bindings.append(.integer(Int64(max(1, min(limit, 2_000)))))
         return try database.rows(sql, bindings) { statement in
             ClipSummary(id: SQLiteConnection.text(statement, 0), text: SQLiteConnection.text(statement, 1),
                         kind: ClipKind(rawValue: SQLiteConnection.text(statement, 2)) ?? .text,
                         sourceName: SQLiteConnection.text(statement, 3),
                         copiedAt: Date(timeIntervalSince1970: sqlite3_column_double(statement, 4)),
+                        lastUsedAt: Date(timeIntervalSince1970: sqlite3_column_double(statement, 11)),
                         isPinned: sqlite3_column_int(statement, 5) != 0,
                         thumbnail: SQLiteConnection.data(statement, 6), userTitle: SQLiteConnection.text(statement, 7),
                         sourceBundleID: SQLiteConnection.text(statement, 8), contentBytes: Int(sqlite3_column_int64(statement, 9)),
@@ -146,6 +170,26 @@ public actor HistoryStore {
             guard let payload = SQLiteConnection.data(statement, 0) else { throw HistoryError.invalidContent }
             return try JSONDecoder().decode(ClipboardContent.self, from: payload)
         }.first
+    }
+
+    public func recordUse(of identity: String, at date: Date = Date()) throws {
+        guard date.timeIntervalSince1970.isFinite else { throw HistoryError.invalidContent }
+        try database.execute("UPDATE clip_activity SET last_used_at=MAX(last_used_at,?) WHERE id=?",
+                             [.real(date.timeIntervalSince1970), .text(identity)])
+    }
+
+    public func storageUsage() throws -> HistoryStorageUsage {
+        try database.rows("SELECT COALESCE(SUM(byte_count),0),COALESCE(SUM(CASE WHEN pinned=1 THEN byte_count ELSE 0 END),0) FROM clips") {
+            HistoryStorageUsage(totalBytes: Int(sqlite3_column_int64($0, 0)), pinnedBytes: Int(sqlite3_column_int64($0, 1)))
+        }[0]
+    }
+
+    public func setMaximumBytes(_ maximumBytes: Int) throws {
+        guard (1...HistoryLimits.maximumConfigurableBytes).contains(maximumBytes) else { throw HistoryError.invalidCapacity }
+        let previous = limits.maximumBytes
+        limits.maximumBytes = maximumBytes
+        do { try database.transaction { try prune(now: Date(), preserving: nil) } }
+        catch { limits.maximumBytes = previous; throw error }
     }
 
     public func setPinned(_ pinned: Bool, for identity: String) throws {
@@ -201,21 +245,30 @@ public actor HistoryStore {
     }
 
     public func exportArchive() throws -> Data {
-        let entries = try database.rows("SELECT payload,copied_at,pinned,user_title FROM clips JOIN clip_details ON clips.id=clip_details.id ORDER BY copied_at", []) { statement in
+        let payloadBytes = try database.rows("SELECT COALESCE(SUM(length(payload)),0) FROM clips") { sqlite3_column_int64($0, 0) }.first ?? 0
+        guard payloadBytes <= Archive.maximumBytes else { throw HistoryError.archiveTooLarge }
+        let entries = try database.rows("""
+            SELECT payload,copied_at,pinned,user_title,last_used_at FROM clips
+            JOIN clip_details ON clips.id=clip_details.id JOIN clip_activity ON clips.id=clip_activity.id ORDER BY last_used_at
+            """, []) { statement in
             guard let payload = SQLiteConnection.data(statement, 0) else { throw HistoryError.invalidContent }
             return Archive.Entry(content: try JSONDecoder().decode(ClipboardContent.self, from: payload),
                                  copiedAt: Date(timeIntervalSince1970: sqlite3_column_double(statement, 1)),
-                                 pinned: sqlite3_column_int(statement, 2) != 0, userTitle: SQLiteConnection.text(statement, 3))
+                                 pinned: sqlite3_column_int(statement, 2) != 0, userTitle: SQLiteConnection.text(statement, 3),
+                                 lastUsedAt: Date(timeIntervalSince1970: sqlite3_column_double(statement, 4)))
         }
-        return try JSONEncoder().encode(Archive(version: 1, entries: entries))
+        let data = try JSONEncoder().encode(Archive(version: 1, entries: entries))
+        guard data.count <= Archive.maximumBytes else { throw HistoryError.archiveTooLarge }
+        return data
     }
 
     public func importArchive(from url: URL, excludedApplications: Set<String>) throws -> Int {
-        let maximumArchiveBytes = 384 * 1024 * 1024
         let handle = try FileHandle(forReadingFrom: url)
         defer { try? handle.close() }
-        guard let data = try handle.read(upToCount: maximumArchiveBytes + 1), data.count <= maximumArchiveBytes else {
-            throw HistoryError.invalidContent
+        guard try handle.seekToEnd() <= UInt64(Archive.maximumBytes) else { throw HistoryError.archiveTooLarge }
+        try handle.seek(toOffset: 0)
+        guard let data = try handle.read(upToCount: Archive.maximumBytes + 1), data.count <= Archive.maximumBytes else {
+            throw HistoryError.archiveTooLarge
         }
         let archive: Archive
         do { archive = try JSONDecoder().decode(Archive.self, from: data) }
@@ -232,10 +285,15 @@ public actor HistoryStore {
             if let title = entry.userTitle { _ = try Self.validTitle(title) }
             guard entry.copiedAt.timeIntervalSince1970.isFinite,
                   entry.copiedAt <= Date().addingTimeInterval(300) else { throw HistoryError.invalidContent }
+            if let lastUsedAt = entry.lastUsedAt {
+                guard lastUsedAt.timeIntervalSince1970.isFinite, lastUsedAt >= entry.copiedAt,
+                      lastUsedAt <= Date().addingTimeInterval(300) else { throw HistoryError.invalidContent }
+            }
         }
         return try database.transaction {
             for entry in entries {
                 let identity = try upsert(entry.content, at: entry.copiedAt)
+                if let lastUsedAt = entry.lastUsedAt { try recordUse(of: identity, at: lastUsedAt) }
                 if entry.pinned { try database.execute("UPDATE clips SET pinned=1 WHERE id=?", [.text(identity)]) }
                 if let title = entry.userTitle { try updateTitle(identity, title: Self.validTitle(title)) }
             }
@@ -270,16 +328,16 @@ public actor HistoryStore {
 
     private func prune(now: Date, preserving identity: String?) throws {
         let cutoff = now.addingTimeInterval(-Double(limits.retentionDays) * 86_400).timeIntervalSince1970
-        try database.execute("DELETE FROM clips WHERE pinned=0 AND copied_at<? AND id!=?",
+        try database.execute("DELETE FROM clips WHERE pinned=0 AND id IN (SELECT id FROM clip_activity WHERE last_used_at<?) AND id!=?",
                              [.real(cutoff), .text(identity ?? "")])
-        let unpinned = try database.rows("SELECT id FROM clips WHERE pinned=0 ORDER BY copied_at DESC,rowid DESC") {
+        let unpinned = try database.rows("SELECT clips.id FROM clips JOIN clip_activity ON clips.id=clip_activity.id WHERE pinned=0 ORDER BY last_used_at DESC,clips.rowid DESC") {
             SQLiteConnection.text($0, 0)
         }
         for stale in unpinned.dropFirst(max(1, limits.maximumItems)) where stale != identity {
             try database.execute("DELETE FROM clips WHERE id=?", [.text(stale)])
         }
         var total = try database.rows("SELECT COALESCE(SUM(byte_count),0) FROM clips") { sqlite3_column_int64($0, 0) }.first ?? 0
-        let removable = try database.rows("SELECT id,byte_count FROM clips WHERE pinned=0 AND id!=? ORDER BY copied_at,rowid",
+        let removable = try database.rows("SELECT clips.id,byte_count FROM clips JOIN clip_activity ON clips.id=clip_activity.id WHERE pinned=0 AND clips.id!=? ORDER BY last_used_at,clips.rowid",
                                           [.text(identity ?? "")]) { (SQLiteConnection.text($0, 0), sqlite3_column_int64($0, 1)) }
         for (stale, size) in removable where total > limits.maximumBytes {
             try database.execute("DELETE FROM clips WHERE id=?", [.text(stale)])
@@ -290,11 +348,13 @@ public actor HistoryStore {
 }
 
 private struct Archive: Codable {
+    static let maximumBytes = 384 * 1024 * 1024
     struct Entry: Codable {
         let content: ClipboardContent
         let copiedAt: Date
         let pinned: Bool
         let userTitle: String?
+        let lastUsedAt: Date?
     }
     let version: Int
     let entries: [Entry]

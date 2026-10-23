@@ -76,6 +76,8 @@ enum UICheck {
                 for (name, passed) in cardResults { results[name] = passed }
                 let scrollResults = try await ScrollUICheck.run(panel: panel, open: open)
                 for (name, passed) in scrollResults { results[name] = passed }
+                let activityResults = try await HistoryActivityUICheck.run(panel: panel, open: open)
+                for (name, passed) in activityResults { results[name] = passed }
                 if let view = panel.panel.contentView, let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) {
                     view.cacheDisplay(in: view.bounds, to: bitmap)
                     if let image = bitmap.representation(using: .png, properties: [:]) {

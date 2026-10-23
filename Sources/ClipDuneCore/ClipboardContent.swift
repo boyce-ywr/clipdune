@@ -144,6 +144,7 @@ public struct ClipSummary: Identifiable, Sendable {
     public let kind: ClipKind
     public let sourceName: String
     public let copiedAt: Date
+    public let lastUsedAt: Date
     public let isPinned: Bool
     public let thumbnail: Data?
     public let userTitle: String
@@ -163,6 +164,7 @@ public struct ClipSummary: Identifiable, Sendable {
 }
 
 public struct HistoryLimits: Sendable {
+    public static let maximumConfigurableBytes = 2_048 * 1024 * 1024
     public var maximumItems: Int
     public var maximumBytes: Int
     public var maximumItemBytes: Int
@@ -177,16 +179,23 @@ public struct HistoryLimits: Sendable {
     }
 }
 
+public struct HistoryStorageUsage: Sendable {
+    public let totalBytes: Int
+    public let pinnedBytes: Int
+}
+
 public enum HistoryError: LocalizedError {
-    case database(String), invalidContent, unsupportedVersion, capacityReached, invalidTitle
+    case database(String), invalidContent, unsupportedVersion, capacityReached, invalidTitle, invalidCapacity, archiveTooLarge
 
     public var errorDescription: String? {
         switch self {
         case .database: return "本地数据库操作失败，请检查存储空间与文件权限。"
         case .invalidContent: return "内容格式无效或超过单项大小限制。"
         case .unsupportedVersion: return "数据版本高于当前应用支持的版本，请先升级应用。"
-        case .capacityReached: return "收藏内容已占满存储预算，请先删除不需要的收藏。"
+        case .capacityReached: return "存储容量不足；收藏不会自动删除。请在设置中提高容量上限，或清理不需要的收藏。"
         case .invalidTitle: return "名称最多 120 个字符，不能包含换行或控制字符。"
+        case .invalidCapacity: return "存储容量必须大于零且不超过 2 GiB。"
+        case .archiveTooLarge: return "备份文件超过独立的 384 MiB 安全上限。请先清理不需要的历史；提高存储容量不会提高备份文件上限。"
         }
     }
 }

@@ -3,6 +3,9 @@ import Foundation
 public struct AppPreferences: Equatable, Sendable {
     public enum Appearance: String, CaseIterable, Sendable { case system, light, dark }
     public var maximumItems: Int = 5_000
+    public static let storageOptionsMiB = [64, 128, 256, 512, 1_024, 2_048]
+    public var maximumStorageMiB: Int = 256
+    public var maximumStorageBytes: Int { maximumStorageMiB * 1024 * 1024 }
     public var retentionDays: Int = 30
     public var startsAtLogin = false
     public var showsMenuBarIcon = true
@@ -17,6 +20,9 @@ public struct AppPreferences: Equatable, Sendable {
 
     public init(defaults: UserDefaults) {
         if defaults.object(forKey: "maximumItems") != nil { maximumItems = min(50_000, max(100, defaults.integer(forKey: "maximumItems"))) }
+        if Self.storageOptionsMiB.contains(defaults.integer(forKey: "maximumStorageMiB")) {
+            maximumStorageMiB = defaults.integer(forKey: "maximumStorageMiB")
+        }
         if defaults.object(forKey: "retentionDays") != nil { retentionDays = min(365, max(1, defaults.integer(forKey: "retentionDays"))) }
         startsAtLogin = defaults.bool(forKey: "startsAtLogin")
         if defaults.object(forKey: "showsMenuBarIcon") != nil { showsMenuBarIcon = defaults.bool(forKey: "showsMenuBarIcon") }
@@ -32,6 +38,7 @@ public struct AppPreferences: Equatable, Sendable {
 
     public func save(to defaults: UserDefaults) {
         defaults.set(maximumItems, forKey: "maximumItems")
+        defaults.set(maximumStorageMiB, forKey: "maximumStorageMiB")
         defaults.set(retentionDays, forKey: "retentionDays")
         defaults.set(startsAtLogin, forKey: "startsAtLogin")
         defaults.set(showsMenuBarIcon, forKey: "showsMenuBarIcon")

@@ -1,8 +1,17 @@
 # 验证状态
 
-核查日期：2026-10-22。开发机：Apple Silicon，Swift 6.4，Command Line Tools，macOS 27 SDK。
+核查日期：2026-10-23。开发机：Apple Silicon，Swift 6.4，Command Line Tools，macOS 27 SDK。
 
 ## 已执行
+
+### 容量与最近使用（未发布）
+
+- `bash scripts/check.sh`：56 个场景、275 个断言通过，应用、更新辅助程序 Release 编译及发布工具编译通过；同一测试二进制连续运行三次仍为零失败。
+- `CLIPDUNE_UI_CONFIGURATION=release bash scripts/check-ui.sh bundle`：实际开发包普通／全屏各 60 项布尔检查通过。新增真实选择回调的复制／粘贴后前移，且条目 ID 集合、最近采集时间不变。
+- 普通／全屏各五个设置页面完成显示检查；容量提高、降低时取消、降低时确认、容量占用显示四项均通过。已人工查看实际 Release 包通用设置截图，容量行、用量与规则说明正常显示，剩余内容可滚动访问。
+- 原有普通／全屏可见性、中文输入、卡片操作、滚动复位、重复唤出与焦点归还检查继续通过。包签名 `codesign --verify --deep --strict dist/ClipDune.app` 通过，仍是开发签名，不是公证验收。
+- 机器结果位于 `qa/2026-10-23-history-policy-windowed-bundle.json`、`qa/2026-10-23-history-policy-fullscreen-bundle.json`、`qa/2026-10-23-history-policy-windowed-settings.json`、`qa/2026-10-23-history-policy-fullscreen-settings.json`；截图只含合成数据。
+- 未发布新版本，未修改版本号或更新公钥；未运行真实用户历史迁移、第三方终端插入或在线升级重启。QA 粘贴在演示模式使用命名剪贴板，不将其表述为真实目标应用插入通过。
 
 ### 0.3.1
 
