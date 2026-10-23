@@ -4,6 +4,14 @@
 
 ## 已执行
 
+### 部分编辑器粘贴焦点兼容修复（未发布）
+
+- `bash scripts/check.sh`：64 个场景、332 个断言通过，应用与更新辅助程序 Release 编译通过。新增无 AX 输入元素回退、窗口证据交叉检查、原控件丢失拒绝、权限／读取异常、持续稳定恢复和失败原因区分。
+- 实际隔离 AppKit 窗口验证 WindowServer 窗口编号、窗口切换、浮层保守拒绝和窗口恢复；只检查编号，不读取窗口标题、文档正文或系统剪贴板。
+- `bash scripts/check-ui.sh`：开发入口普通／原生全屏各 60 项布尔检查通过，五个设置页和四项容量设置检查通过。结果位于 `qa/2026-10-23-paste-focus-windowed-development.json`、`qa/2026-10-23-paste-focus-fullscreen-development.json` 及对应的 `*-settings.json`。
+- 未替换运行中的 `dist/ClipDune.app`，未重新创建或发布 Release。原策略新增回归先失败，修复后通过；不把这个结果表述为截图对应编辑器已实测成功。
+- 真实跨应用插入待验证：诊断进程无辅助功能权限，本次没有向用户实际文档发送输入。已知根因和受限窗口回退的能力边界见 `issues/2026-10-23-部分编辑器直接粘贴被焦点校验拒绝.md`。
+
 ### 0.4.1 双架构 DMG（草稿，正式发布受阻）
 
 - 构建号 6，最低 macOS 14。`make release` 生成 Apple Silicon／arm64 和 Intel／x86_64 两个 DMG、Universal ZIP、签名清单和 `SHA256SUMS.txt`。

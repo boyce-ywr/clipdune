@@ -18,7 +18,7 @@
 - 焦点：展示与输入准备是一项操作，明确获得 key window 和搜索框 first responder；下一轮主循环的补充聚焦绑定当前展示代次，不允许过期回调重新抢焦点。
 - 输入：原生 NSSearchField / NSTextView 处理组词。输入法有 marked text 时，不截获快捷粘贴与导航命令。
 - 退出：Esc、切换空间或点击其他应用收起。退出不主动激活另一个 Space，也不在未确认焦点的情况下发送粘贴。
-- 目标：唤出时记录原应用和可访问性输入元素；粘贴前再次比较。不匹配就只写剪贴板，提示用户手动粘贴。
+- 目标：唤出时记录原应用、辅助功能窗口／输入元素及 WindowServer 窗口编号。已知窗口或控件切换时拒绝粘贴；若目标从一开始就不提供输入元素属性，允许在同一窗口持续稳定 100 ms 后回退发送快捷键。读取错误、权限缺失、无窗口证据或恢复期间新增外部输入不能走回退。无法观察控件的目标只能保证到窗口级，不能声称验证了同一个光标。
 - 查询：异步检索结果有代次检查，较早的查询不能覆盖较新的查询。
 - 滚动：选中项同步不等于滚动复位。面板每次打开和重置查询结果时，在布局完成后明确回到横向起点；“回到最新”按钮复用此行为但保留当前查询条件。
 
@@ -30,7 +30,7 @@
 | PasteboardCodec | read / write | 白名单表示、多个条目、敏感标记、保真回填、缩略图 |
 | ClipboardMonitor | start / stop / pause / requestAccess | 变化轮询、权限状态、排除来源、采集期间的变化检查 |
 | ClipboardPanelController | show / hide / update | 非激活面板、Space 与显示器、键盘焦点、检索与卡片交互 |
-| PasteDestination | capture / pasteIfStillFocused | 原目标身份与输入元素验证、按当前键盘布局发送粘贴 |
+| PasteDestination | capture / pasteWhenReady | 原应用／窗口身份、可访问性输入元素与受限窗口回退、按当前键盘布局发送粘贴 |
 
 目前不建立虚构的多平台抽象；Core 不包含 AppKit 窗口代码，但仍使用 Apple CryptoKit。将来 Windows 确立后再验证数据与哈希实现，并增加真实的系统适配实现。
 

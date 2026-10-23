@@ -182,7 +182,7 @@ final class UpdateTests {
 
     func destinationPolicyRejectsWrongApplicationsAndWindows() {
         expectEqual(PasteFocusPolicy.evaluate(expectedPID: 100, currentPID: 100, focusedElementMatches: true, targetWindowMatches: true, hasPermission: true, targetTerminated: false), .ready)
-        expectEqual(PasteFocusPolicy.evaluate(expectedPID: 100, currentPID: 100, focusedElementMatches: nil, targetWindowMatches: true, hasPermission: true, targetTerminated: false), .waitingForFocus)
+        expectEqual(PasteFocusPolicy.evaluate(expectedPID: 100, currentPID: 100, focusedElementMatches: nil, targetWindowMatches: true, hasPermission: true, targetTerminated: false, allowsWindowFallback: false), .waitingForFocus)
         expectEqual(PasteFocusPolicy.evaluate(expectedPID: 100, currentPID: 200, focusedElementMatches: true, targetWindowMatches: true, hasPermission: true, targetTerminated: false), .targetChanged)
         expectEqual(PasteFocusPolicy.evaluate(expectedPID: 100, currentPID: 100, focusedElementMatches: true, targetWindowMatches: false, hasPermission: true, targetTerminated: false), .targetChanged)
         expectEqual(PasteFocusPolicy.evaluate(expectedPID: 100, currentPID: 100, focusedElementMatches: true, targetWindowMatches: true, hasPermission: false, targetTerminated: false), .unavailable)

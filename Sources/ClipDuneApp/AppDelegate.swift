@@ -314,7 +314,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     showToast("已向原应用发送粘贴")
                 case .cancelled: break
                 case .permissionRequired: requestPasteAccess()
-                default: showToast("原输入位置不可用或已切换 · 已复制，可按 ⌘V 粘贴")
+                default: showToast(result?.fallbackMessage ?? "未记录到原目标应用 · 已复制，可按 ⌘V 粘贴")
                 }
             } catch { setStatus(error.localizedDescription) }
         }

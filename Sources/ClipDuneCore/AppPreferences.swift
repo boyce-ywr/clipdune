@@ -61,12 +61,34 @@ public enum PasteReadiness: Equatable, Sendable {
 
 public enum PasteFocusPolicy {
     public static func evaluate(expectedPID: Int32, currentPID: Int32?, focusedElementMatches: Bool?,
-                                targetWindowMatches: Bool?, hasPermission: Bool, targetTerminated: Bool) -> PasteReadiness {
+                                targetWindowMatches: Bool?, hasPermission: Bool, targetTerminated: Bool,
+                                allowsWindowFallback: Bool = true, windowServerMatches: Bool? = nil) -> PasteReadiness {
         guard hasPermission, !targetTerminated else { return .unavailable }
         guard currentPID == expectedPID else { return .targetChanged }
-        if targetWindowMatches == false { return .targetChanged }
+        if targetWindowMatches == false || windowServerMatches == false { return .targetChanged }
         if focusedElementMatches == true { return .ready }
         if focusedElementMatches == false { return .targetChanged }
+        if allowsWindowFallback && (targetWindowMatches == true || windowServerMatches == true) { return .ready }
         return .waitingForFocus
+    }
+}
+
+public struct PasteFocusRecovery {
+    private var readySince: TimeInterval?
+    private var windowFallback = false
+
+    public init() { }
+
+    public mutating func observe(_ readiness: PasteReadiness, usingWindowFallback: Bool, at time: TimeInterval) -> PasteReadiness {
+        guard readiness == .ready else {
+            readySince = nil
+            return readiness
+        }
+        if readySince == nil || windowFallback != usingWindowFallback {
+            readySince = time
+            windowFallback = usingWindowFallback
+        }
+        let delay = usingWindowFallback ? 0.1 : 0.025
+        return time - (readySince ?? time) >= delay ? .ready : .waitingForFocus
     }
 }

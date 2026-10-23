@@ -5,6 +5,13 @@ struct CheckRunner {
     @MainActor
     static func main() async {
         let checks: [(String, @MainActor () async throws -> Void)] = [
+            ("同一窗口无辅助功能输入控件仍可粘贴", { PasteFocusTests().unchangedWindowWithoutAccessibilityElementCanPaste() }),
+            ("窗口回退需肯定证据且不得与切换矛盾", { PasteFocusTests().windowFallbackRequiresPositiveIdentityAndNoContradictions() }),
+            ("已知焦点丢失和权限失败不回退", { PasteFocusTests().knownChangedOrLostFocusDoesNotUseWindowFallback() }),
+            ("焦点恢复需要持续稳定", { PasteFocusTests().recoveryWaitsForContinuousStableFocus() }),
+            ("辅助功能未提供属性与读取错误分开", { PasteFocusTests().unsupportedAXAttributesAreNotConfusedWithErrors() }),
+            ("窗口编号识别切换并拒绝浮层回退", { try await PasteFocusTests().windowServerTracksWindowSwitchesWithoutReadingContents() }),
+            ("粘贴降级原因分开提示", { PasteFocusTests().failureMessagesExplainWhatWasRejected() }),
             ("使用前移且保留原文与采集时间", { try await HistoryActivityTests().successfulUseMovesWithoutChangingContentOrCaptureTime() }),
             ("去重保留不同粘贴格式", { try await HistoryActivityTests().deduplicationRetainsFormattingDifferences() }),
             ("时间筛选与过期依据最近使用", { try await HistoryActivityTests().filtersAndExpirationUseRecentActivity() }),
