@@ -4,6 +4,17 @@
 
 ## 已执行
 
+### 0.4.1 双架构 DMG（草稿，正式发布受阻）
+
+- 构建号 6，最低 macOS 14。`make release` 生成 Apple Silicon／arm64 和 Intel／x86_64 两个 DMG、Universal ZIP、签名清单和 `SHA256SUMS.txt`。
+- 两个 DMG 均完成只读挂载、版本／公钥、Applications 安装入口、主程序与辅助程序的单架构、严格代码签名检查；四个资产的 SHA-256 校验通过。将 ARM 镜像误标为 Intel 的负向检查明确拒绝。
+- Universal ZIP 的主程序与辅助程序均含 arm64 和 x86_64，签名更新清单也声明两种架构；原更新签名公钥和协议保持兼容。
+- `bash scripts/check.sh`：57 个场景、277 个断言通过。新增 Universal 清单签名往返、两种架构兼容与不支持架构拒绝。
+- 原位置的 Universal Release 包普通／全屏各 60 项布尔检查和四项容量设置检查通过；记录为 `qa/2026-10-23-v0.4.1-windowed-bundle.json`、`qa/2026-10-23-v0.4.1-fullscreen-bundle.json` 和对应的 `*-settings.json`。
+- **DMG 内 ARM 应用及复制后的应用运行失败**：收到 `SIGKILL`／退出 137，无实际图标输出；旧版 0.4.0 在临时目录也复现。根因未确定，不归咎于某个安全组件，不用磁盘签名通过替代运行验收。详见 `issues/2026-10-23-DMG运行验收被系统终止.md`。
+- Intel 仅完成交叉编译与静态封装检查，未做 Intel 实机运行验证。本机没有可用的 Developer ID 签名身份；没有更改安全策略或安装 Rosetta。
+- 0.4.1 只保留草稿，在线 Latest 保持 0.4.0；正式发布需先通过 DMG 的实际运行门槛。
+
 ### 0.4.0
 
 - 发布构建为 5，应用最低要求 macOS 14，安装包架构为 arm64。关于与更新页面已确认显示 0.4.0。

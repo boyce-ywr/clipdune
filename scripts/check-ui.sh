@@ -11,7 +11,7 @@ output="$(mktemp -d /tmp/clipdune-ui.XXXXXX)"
 app_executable="$binary_directory/ClipDune"
 host_executable="$binary_directory/ClipDuneQAHost"
 if [[ "$launch_mode" == bundle ]]; then
-    bash scripts/build.sh "$configuration"
+    bash scripts/build.sh "$configuration" "${CLIPDUNE_BUILD_ARCHITECTURE:-native}"
     app_executable="$PWD/dist/ClipDune.app/Contents/MacOS/ClipDune"
 fi
 host_pid=""

@@ -9,8 +9,8 @@ final class UpdateTests {
     init() throws { try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true) }
     deinit { try? FileManager.default.removeItem(at: directory) }
 
-    private func manifest(data: Data = Data("fixture".utf8), build: Int = 2) -> ReleaseManifest {
-        .init(version: "0.2.0", build: build, minimumSystemVersion: "14.0", architectures: ["arm64"],
+    private func manifest(data: Data = Data("fixture".utf8), build: Int = 2, architectures: [String] = ["arm64"]) -> ReleaseManifest {
+        .init(version: "0.2.0", build: build, minimumSystemVersion: "14.0", architectures: architectures,
               archiveName: "ClipDune-0.2.0-macOS.zip", archiveBytes: Int64(data.count),
               sha256: SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined(), notes: "测试版本")
     }
@@ -53,6 +53,22 @@ final class UpdateTests {
         catch UpdateError.incompatible { }
         expectNil(ReleaseManifest.versionParts("1.0-beta"))
         expectNil(ReleaseManifest.versionParts("../x"))
+    }
+
+    func universalManifestSupportsBothArchitectures() throws {
+        let key = Curve25519.Signing.PrivateKey()
+        let original = manifest(architectures: ["arm64", "x86_64"])
+        let signed = try JSONEncoder().encode(SignedRelease(manifest: original, privateKey: key))
+        let restored = try SignedRelease.verify(signed, publicKey: key.publicKey.rawRepresentation)
+        expectEqual(restored, original)
+        for architecture in ["arm64", "x86_64"] {
+            try restored.checkCompatibility(systemVersion: "14.0", architecture: architecture)
+        }
+        expectEqual(Set(restored.architectures), ["arm64", "x86_64"])
+        do {
+            try restored.checkCompatibility(systemVersion: "14.0", architecture: "i386")
+            fail("Unsupported architecture accepted")
+        } catch UpdateError.incompatible { }
     }
 
     func redirectPolicyDoesNotLeakAuthorization() throws {

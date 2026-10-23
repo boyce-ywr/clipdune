@@ -2,7 +2,7 @@
 
 ## 用户使用
 
-1. **首次从 0.1.0 升级需手动安装当前版本**。0.2.0 及之后版本已有更新器，可以在线检查 0.4.0。
+1. **首次从 0.1.0 升级需手动安装当前版本**。0.2.0 及之后版本已有更新器；当前线上仍为 0.4.0，0.4.1 双架构草稿尚未开放在线更新。0.4.1 手动安装按芯片选择 `arm64.dmg`（Apple Silicon）或 `x86_64.dmg`（Intel）；正式发布后在线更新共用 Universal ZIP。
 2. 将完整应用放在 `/Applications` 或 `~/Applications`。目录必须可写；更新器不提权、不修改管理员权限、不在 DMG 或开发产物目录原地安装。
 3. 打开 **设置 → 关于与更新**，为 `boyce-ywr/clipdune` 配置自己的 GitHub fine-grained PAT，仅选择这个仓库并授权 `Contents: Read`。这项权限也能读取仓库源码，并非仅能读 Release。
 4. 令牌只保存在 macOS 钥匙串，限定本机，不写进 UserDefaults、日志、应用包、URL 或仓库。应用不会读取 `gh` 的登录凭据。发布验证工具可由操作者通过 stdin 临时传入凭据，不保存。
@@ -15,7 +15,8 @@
 
 - 固定仓库 `boyce-ywr/clipdune`，仓库保持 Private。
 - `GET /repos/boyce-ywr/clipdune/releases/latest` 只消费非草稿、非预发布版本；不自行降级为 beta 或任意其他仓库。
-- 每个版本必须有 `clipdune-update.json` 和 `ClipDune-<version>-macOS.zip` 两个资产。
+- 每个版本必须有 `clipdune-update.json` 和 `ClipDune-<version>-macOS.zip` 两个在线更新资产。自 0.4.1 起 ZIP 中的主程序和更新辅助程序均包含 arm64 与 x86_64，清单同时声明两种架构。
+- 手动安装另提供 `ClipDune-<version>-macOS-arm64.dmg` 与 `ClipDune-<version>-macOS-x86_64.dmg`，镜像中的主程序和辅助程序均为对应单架构。`SHA256SUMS.txt` 覆盖两个 DMG、ZIP 和签名清单；共五个发布资产。
 - 清单封装原始 JSON 的 Base64 与 Ed25519 签名。客户端使用应用资源中的固定公钥验证，之后才信任构建号、版本、系统要求、架构、安装包名、大小、SHA-256 和更新说明。
 - `CFBundleVersion` 是单调递增整数。只安装比当前构建号大的版本；清单 version 必须与 Release tag 的 `v<version>` 一致。
 - 下载按 GitHub asset ID 请求 API，支持 200 原始内容或 302 CDN 跳转。认证只发到固定仓库的 `api.github.com` 路径；CDN 请求重建 headers，不携带 Bearer。
@@ -56,7 +57,11 @@ bash scripts/release.sh draft
 bash scripts/release.sh publish
 ```
 
-`prepare` 生成 ZIP 和签名清单并验证。`draft` 检查工作区干净、远端 main 与 HEAD 一致、仓库私有，上传草稿并通过应用共用的原生 GitHub 下载器验证真实资产。`publish` 还要求 Release 应用包 GUI 检查通过，下载验签成功后才切换正式 Release。已有同名版本会失败，不会覆盖资产；实际工作中选择 draft 或 publish 其中一条创建路径。最终上传构建与源码版本保持一致。
+`prepare` 编译 Universal 主程序与辅助程序，生成签名 ZIP，再分别提取 arm64 和 x86_64 切片、重新签名并制作 DMG。两种 DMG 都执行只读挂载、版本、公钥、安装入口、单架构和代码签名检查。构建与草稿不把静态检查表述为运行验收。
+
+`draft` 检查工作区干净、远端 main 与 HEAD 一致、仓库私有，上传五个资产；通过应用共用的原生下载器校验 ZIP，再下载两个 DMG 与校验文件，核对 SHA-256 并重新挂载检查。`publish` 还要求 Universal Release 应用包 GUI 检查通过，并在上传前及下载后运行本机架构 DMG 内的安全图标渲染启动检查；任一步失败都不能切换正式 Release。已有同名版本会失败，不会覆盖资产；实际工作中选择 draft 或 publish 其中一条创建路径。草稿晋升前必须重跑上述运行检查，不能仅凭静态校验手动发布。最终上传构建与源码版本保持一致。
+
+单独编译 Universal 应用可运行 `bash scripts/build.sh release universal`；GUI 验证命令为 `CLIPDUNE_UI_CONFIGURATION=release CLIPDUNE_BUILD_ARCHITECTURE=universal bash scripts/check-ui.sh bundle`。交叉编译、架构检查和 Apple Silicon 本机运行不等于 Intel 实机运行验收。
 
 可通过 `CLIPDUNE_SIGN_IDENTITY` 指定自己的合法代码签名身份。未指定时只是 ad-hoc 开发签名，不是 Developer ID，也不是公证。Ed25519 更新签名与 Apple 代码签名承担不同职责，不能互相替代。
 

@@ -2,7 +2,7 @@
 build:
 	bash scripts/build.sh debug
 release:
-	bash scripts/build.sh release
+	bash scripts/release.sh prepare
 test:
 	swift run ClipDuneChecks
 check:

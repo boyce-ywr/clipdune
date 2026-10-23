@@ -2,10 +2,17 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 configuration="${1:-debug}"
-case "$configuration" in debug|release) ;; *) echo "用法：$0 [debug|release]" >&2; exit 2 ;; esac
-swift build -c "$configuration" --product ClipDune
-swift build -c "$configuration" --product ClipDuneUpdateHelper
-binary_directory="$(swift build -c "$configuration" --show-bin-path)"
+architecture="${2:-native}"
+case "$configuration" in debug|release) ;; *) echo "用法：$0 [debug|release] [native|universal]" >&2; exit 2 ;; esac
+build_options=(-c "$configuration")
+case "$architecture" in
+    native) ;;
+    universal) build_options+=(--arch arm64 --arch x86_64) ;;
+    *) echo "架构必须是 native 或 universal。" >&2; exit 2 ;;
+esac
+swift build "${build_options[@]}" --product ClipDune
+swift build "${build_options[@]}" --product ClipDuneUpdateHelper
+binary_directory="$(swift build "${build_options[@]}" --show-bin-path)"
 application="$PWD/dist/ClipDune.app"
 mkdir -p "$application/Contents/MacOS" "$application/Contents/Resources" "$application/Contents/Helpers"
 cp "$binary_directory/ClipDune" "$application/Contents/MacOS/ClipDune.next"
@@ -13,6 +20,12 @@ mv -f "$application/Contents/MacOS/ClipDune.next" "$application/Contents/MacOS/C
 cp Resources/Info.plist "$application/Contents/Info.plist"
 cp Resources/UpdatePublicKey.txt "$application/Contents/Resources/UpdatePublicKey.txt"
 cp "$binary_directory/ClipDuneUpdateHelper" "$application/Contents/Helpers/ClipDuneUpdateHelper"
+if [[ "$architecture" == universal ]]; then
+    for slice in arm64 x86_64; do
+        lipo "$application/Contents/MacOS/ClipDune" -verify_arch "$slice"
+        lipo "$application/Contents/Helpers/ClipDuneUpdateHelper" -verify_arch "$slice"
+    done
+fi
 icon_directory="$(mktemp -d /tmp/clipdune-icon.XXXXXX)"
 trap 'rm -rf "$icon_directory"' EXIT
 mkdir -p "$icon_directory/AppIcon.iconset"

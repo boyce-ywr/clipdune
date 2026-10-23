@@ -40,6 +40,7 @@ struct CheckRunner {
             ("更新签名拒绝篡改", { try UpdateTests().signatureRejectsTamperingAndWrongKey() }),
             ("更新包哈希与大小", { try UpdateTests().archiveHashAndLengthAreVerified() }),
             ("更新系统与架构校验", { try UpdateTests().architectureAndSystemCompatibility() }),
+            ("Universal 更新清单签名与双架构兼容", { try UpdateTests().universalManifestSupportsBothArchitectures() }),
             ("重定向不泄漏授权", { try UpdateTests().redirectPolicyDoesNotLeakAuthorization() }),
             ("ZIP 路径与符号链接", { try UpdateTests().zipEntriesRejectTraversalAndSymlinks() }),
             ("原子替换与回滚", { try UpdateTests().atomicSwapAndRollbackPreserveBothVersions() }),

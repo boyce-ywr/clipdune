@@ -2,7 +2,7 @@
 
 随手复制，随时找回。一个独立实现、以键盘工作流为先的 macOS 剪贴板工具。
 
-当前为 **0.4.0 开发预览版**。自用优先，未来是否付费发行另行决定；尚未公证、未提交 Mac App Store，不应当作正式发行包。
+当前开发版本为 **0.4.1（双架构 DMG 草稿）**，线上最新版仍为 **0.4.0**。0.4.1 的复制后运行验收受阻，暂不正式发布。自用优先，未来是否付费发行另行决定；尚未公证、未提交 Mac App Store，不应当作正式发行包。
 
 本机验证结果与版本边界见 `docs/verification.md`。Release 应用包的普通／原生全屏交互与设置窗口有隔离检查；真实终端授权后的直接插入、完整升级后重启与公证仍需分别验收。
 
@@ -12,14 +12,16 @@
 
 ## 开始使用
 
-要求 macOS 14+、Swift 6 工具链。没有第三方包依赖，系统 SQLite 提供存储与索引。
+要求 macOS 14+。0.4.1 草稿提供两个安装镜像：Apple Silicon 对应 `ClipDune-0.4.1-macOS-arm64.dmg`，Intel 对应 `ClipDune-0.4.1-macOS-x86_64.dmg`；安装方式为打开镜像后将 ClipDune 拖入 Applications。该版本在线更新包为包含两种架构的 Universal ZIP，运行验收通过并正式发布后，无需手动选包升级。
+
+自行编译另外需要 Swift 6 工具链。没有第三方包依赖，系统 SQLite 提供存储与索引。
 
 ```bash
 make test       # 隔离数据与剪贴板测试，不需要 XCTest
 make build      # dist/ClipDune.app，当前机器架构的开发签名包
 make demo       # 合成演示内容，不读取系统剪贴板
 make run        # 实际使用，按需授权后台读取与直接粘贴
-make release    # 优化构建，不代表正式发行或公证
+make release    # 两个 DMG、Universal ZIP、签名清单与校验文件；需要仓库外更新签名私钥
 ```
 
 正常使用：将 `dist/ClipDune.app` 放入 Applications 并打开；开发入口也可运行 `make run`。首次使用在菜单或设置中允许后台读取，应用会打开对应系统设置页。直接粘贴另需辅助功能权限；没有权限仍可复制选中项，再手动按 `⌘V`。登录启动和在线安装需要完整应用包。
