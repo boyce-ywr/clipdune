@@ -11,8 +11,6 @@ final class SettingsModel: ObservableObject {
     @Published var updateStatus = "尚未检查"
     @Published var updateBusy = false
     @Published var updateProgress: Double?
-    @Published var tokenPresent = false
-    @Published var tokenDraft = ""
     @Published var storageUsage: HistoryStorageUsage?
     @Published var storageBusy = false
     var onChange: ((AppPreferences, AppPreferences) -> Void)?
@@ -25,8 +23,6 @@ final class SettingsModel: ObservableObject {
     var clearHistory: (() -> Void)?
     var checkUpdates: (() -> Void)?
     var cancelUpdate: (() -> Void)?
-    var saveToken: ((String) -> Void)?
-    var removeToken: (() -> Void)?
 
     init(preferences: AppPreferences) { self.preferences = preferences }
 
@@ -236,7 +232,7 @@ private struct UpdateSettings: View {
                     .font(.caption).foregroundStyle(.secondary)
             }
             Section("GitHub Release 在线升级") {
-                Text("boyce-ywr/clipdune · 私有仓库")
+                Text("boyce-ywr/clipdune")
                 Toggle("自动检查更新（每天一次）", isOn: model.binding(\.automaticallyChecksUpdates))
                 TextField("HTTP 代理", text: model.binding(\.updateProxy))
                 Text("当前默认 127.0.0.1:7897；留空使用系统网络设置。仅更新请求使用此代理。")
@@ -246,20 +242,6 @@ private struct UpdateSettings: View {
                 HStack {
                     Button("检查更新…") { model.checkUpdates?() }.disabled(model.updateBusy)
                     if model.updateBusy { Button("取消") { model.cancelUpdate?() } }
-                }
-            }
-            Section("私有仓库授权") {
-                LabeledContent("令牌状态", value: model.tokenPresent ? "已存入 macOS 钥匙串" : "未配置")
-                SecureField("GitHub 细粒度访问令牌", text: $model.tokenDraft)
-                HStack {
-                    Button("保存到钥匙串") { model.saveToken?(model.tokenDraft) }
-                        .disabled(model.tokenDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                    Button("移除授权") { model.removeToken?() }.disabled(!model.tokenPresent)
-                }
-                Text("只需此仓库的 Contents: Read 权限。令牌不写入配置文件或更新包；应用不会读取 gh 的登录凭据。")
-                    .font(.caption).foregroundStyle(.secondary)
-                Button("在 GitHub 创建令牌…") {
-                    NSWorkspace.shared.open(URL(string: "https://github.com/settings/personal-access-tokens/new")!)
                 }
             }
         }.formStyle(.grouped).toggleStyle(.switch)

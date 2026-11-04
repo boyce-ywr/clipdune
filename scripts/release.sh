@@ -57,7 +57,6 @@ fi
 if [[ "$mode" == draft || "$mode" == publish ]]; then
     [[ -z "$(git status --porcelain)" ]] || { echo '工作区不干净，先提交并推送。' >&2; exit 1; }
     export HTTPS_PROXY="${HTTPS_PROXY:-http://127.0.0.1:7897}" HTTP_PROXY="${HTTP_PROXY:-http://127.0.0.1:7897}"
-    [[ "$(gh api repos/boyce-ywr/clipdune --jq .private)" == true ]] || { echo '仓库必须保持私有。' >&2; exit 1; }
     remote_commit="$(gh api repos/boyce-ywr/clipdune/git/ref/heads/main --jq .object.sha)"
     [[ "$remote_commit" == "$(git rev-parse HEAD)" ]] || { echo '远端 main 与本地不一致。' >&2; exit 1; }
     gh release create "v$version" "$archive" "$directory/clipdune-update.json" "${disk_images[@]}" "$directory/SHA256SUMS.txt" --repo boyce-ywr/clipdune \

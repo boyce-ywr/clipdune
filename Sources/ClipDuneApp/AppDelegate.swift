@@ -177,7 +177,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func configureStatusMenu() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         statusItem?.button?.image = NSImage(systemSymbolName: "square.stack.3d.up", accessibilityDescription: "ClipDune")
-        statusItem?.button?.toolTip = "ClipDune — 拾贴"
         let menu = NSMenu()
         add("打开 ClipDune", action: #selector(togglePanel), to: menu)
         add("设置…", action: #selector(showSettings), to: menu)
@@ -323,7 +322,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func setStatus(_ text: String) {
         lastStatus = text
         statusMenuItem?.title = text
-        statusItem?.button?.toolTip = "ClipDune · \(text)"
         panel?.setStatus(text)
         settingsModel?.clipboardStatus = text
     }

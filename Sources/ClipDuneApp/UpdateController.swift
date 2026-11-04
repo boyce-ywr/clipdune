@@ -17,9 +17,6 @@ final class UpdateController {
         self.isDemo = isDemo
         model.checkUpdates = { [weak self] in self?.check(manual: true) }
         model.cancelUpdate = { [weak self] in self?.cancel() }
-        model.saveToken = { [weak self] token in self?.saveToken(token) }
-        model.removeToken = { [weak self] in self?.removeToken() }
-        if !isDemo { model.tokenPresent = GitHubCredential.isConfigured }
         if !isDemo { restoreInstallationStatus() }
         if !isDemo {
             automaticTimer = Timer.scheduledTimer(withTimeInterval: 3_600, repeats: true) { [weak self] _ in
@@ -29,7 +26,7 @@ final class UpdateController {
     }
 
     func checkAutomaticallyIfDue() {
-        guard !isDemo, model.preferences.automaticallyChecksUpdates, model.tokenPresent,
+        guard !isDemo, model.preferences.automaticallyChecksUpdates,
               Date().timeIntervalSince1970 - defaults.double(forKey: "lastUpdateCheck") >= 86_400 else { return }
         check(manual: false)
     }
@@ -45,11 +42,10 @@ final class UpdateController {
         operation = Task { @MainActor [self] in
             defer { operation = nil; model.updateBusy = false; model.updateProgress = nil }
             do {
-                guard let token = try GitHubCredential.read() else { throw UpdateError.noAuthorization }
                 let key = try trustedPublicKey()
                 let proxyURL = try GitHubUpdatePolicy.proxyURL(model.preferences.updateProxy)
-                let release = try await GitHubReleaseClient.latest(token: token, proxyURL: proxyURL)
-                let data = try await GitHubReleaseClient.manifest(release.asset(named: "clipdune-update.json"), token: token, proxyURL: proxyURL)
+                let release = try await GitHubReleaseClient.latest(proxyURL: proxyURL)
+                let data = try await GitHubReleaseClient.manifest(release.asset(named: "clipdune-update.json"), proxyURL: proxyURL)
                 let manifest = try SignedRelease.verify(data, publicKey: key)
                 guard release.tag_name == "v\(manifest.version)" else { throw UpdateError.invalidManifest }
                 let system = ProcessInfo.processInfo.operatingSystemVersion
@@ -82,7 +78,7 @@ final class UpdateController {
                 try key.base64EncodedString().write(to: directory.appendingPathComponent("public-key.txt"), atomically: true, encoding: .utf8)
                 model.updateStatus = "正在下载 \(manifest.version)…"
                 model.updateProgress = 0
-                try await GitHubReleaseClient.archive(asset, token: token, destination: directory.appendingPathComponent(manifest.archiveName), proxyURL: proxyURL) { [weak self] value in
+                try await GitHubReleaseClient.archive(asset, destination: directory.appendingPathComponent(manifest.archiveName), proxyURL: proxyURL) { [weak self] value in
                     Task { @MainActor in
                         guard let self, self.model.updateBusy else { return }
                         self.model.updateProgress = value
@@ -138,20 +134,6 @@ final class UpdateController {
         case "failed_before_replacement": model.updateStatus = "上次更新失败，原应用未替换。"
         default: model.updateStatus = "上次更新尚未确认完成，请检查数据目录 Updates/installation.json。"
         }
-    }
-
-    private func saveToken(_ token: String) {
-        guard !isDemo else { model.tokenDraft = ""; return }
-        defer { model.tokenDraft = "" }
-        do { try GitHubCredential.save(token); model.tokenPresent = true; model.updateStatus = "授权已保存，可以检查更新。" }
-        catch { model.updateStatus = error.localizedDescription }
-    }
-
-    private func removeToken() {
-        guard !isDemo else { return }
-        cancel()
-        do { try GitHubCredential.remove(); model.tokenPresent = false; model.updateStatus = "授权已移除，自动检查不会再访问私有仓库。" }
-        catch { model.updateStatus = error.localizedDescription }
     }
 
     func stop() { automaticTimer?.invalidate(); automaticTimer = nil; cancel() }

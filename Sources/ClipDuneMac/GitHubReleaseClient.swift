@@ -21,7 +21,7 @@ public struct GitHubRelease: Decodable, Sendable {
 }
 
 public enum GitHubReleaseClient {
-    public static func releaseForPublishing(id: Int64, token: String) async throws -> GitHubRelease {
+    public static func releaseForPublishing(id: Int64, token: String?) async throws -> GitHubRelease {
         guard id > 0 else { throw UpdateError.invalidManifest }
         let data = try await ReleaseRequest(url: GitHubUpdatePolicy.apiRoot.appendingPathComponent("releases/\(id)"),
                                             token: token, accept: "application/vnd.github+json", maximumBytes: 1024 * 1024,
@@ -30,7 +30,7 @@ public enum GitHubReleaseClient {
         return release
     }
 
-    public static func latest(token: String, proxyURL: URL? = URL(string: "http://127.0.0.1:7897")) async throws -> GitHubRelease {
+    public static func latest(token: String? = nil, proxyURL: URL? = URL(string: "http://127.0.0.1:7897")) async throws -> GitHubRelease {
         let data = try await ReleaseRequest(url: GitHubUpdatePolicy.apiRoot.appendingPathComponent("releases/latest"),
                                             token: token, accept: "application/vnd.github+json", maximumBytes: 1024 * 1024, proxyURL: proxyURL).run()
         guard let release = try? JSONDecoder().decode(GitHubRelease.self, from: data), !release.draft, !release.prerelease else {
@@ -39,12 +39,12 @@ public enum GitHubReleaseClient {
         return release
     }
 
-    public static func manifest(_ asset: GitHubRelease.Asset, token: String, proxyURL: URL? = URL(string: "http://127.0.0.1:7897")) async throws -> Data {
+    public static func manifest(_ asset: GitHubRelease.Asset, token: String? = nil, proxyURL: URL? = URL(string: "http://127.0.0.1:7897")) async throws -> Data {
         guard asset.size > 0, asset.size <= 128 * 1024 else { throw UpdateError.invalidManifest }
         return try await ReleaseRequest(url: assetURL(asset.id), token: token, accept: "application/octet-stream", maximumBytes: 128 * 1024, proxyURL: proxyURL).run()
     }
 
-    public static func archive(_ asset: GitHubRelease.Asset, token: String, destination: URL,
+    public static func archive(_ asset: GitHubRelease.Asset, token: String? = nil, destination: URL,
                                proxyURL: URL? = URL(string: "http://127.0.0.1:7897"),
                                progress: @escaping @Sendable (Double) -> Void) async throws {
         guard asset.size > 0, asset.size <= 256 * 1024 * 1024 else { throw UpdateError.invalidDownload }
@@ -59,7 +59,7 @@ public enum GitHubReleaseClient {
 
 private final class ReleaseRequest: NSObject, URLSessionDataDelegate, @unchecked Sendable {
     private let url: URL
-    private let token: String
+    private let token: String?
     private let accept: String
     private let maximumBytes: Int64
     private let destination: URL?
@@ -76,7 +76,7 @@ private final class ReleaseRequest: NSObject, URLSessionDataDelegate, @unchecked
     private let lock = NSLock()
     private var cancelled = false
 
-    init(url: URL, token: String, accept: String, maximumBytes: Int64, proxyURL: URL?,
+    init(url: URL, token: String?, accept: String, maximumBytes: Int64, proxyURL: URL?,
          destination: URL? = nil, progress: (@Sendable (Double) -> Void)? = nil) {
         self.url = url
         self.token = token
@@ -134,7 +134,7 @@ private final class ReleaseRequest: NSObject, URLSessionDataDelegate, @unchecked
         var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData)
         request.setValue("ClipDune-Updater", forHTTPHeaderField: "User-Agent")
         request.setValue(accept, forHTTPHeaderField: "Accept")
-        if GitHubUpdatePolicy.allowsAuthorization(url) {
+        if let token, GitHubUpdatePolicy.allowsAuthorization(url) {
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
             request.setValue("2022-11-28", forHTTPHeaderField: "X-GitHub-Api-Version")
         }

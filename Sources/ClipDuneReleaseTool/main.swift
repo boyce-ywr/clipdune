@@ -94,7 +94,7 @@ do {
                 try data.write(to: directory.appendingPathComponent("clipdune-update.json"), options: .atomic)
                 try await GitHubReleaseClient.archive(asset, token: token, destination: directory.appendingPathComponent(manifest.archiveName)) { _ in }
                 let prepared = try UpdateInstaller.prepare(directory: directory, manifest: manifest)
-                print("PASS 私有仓库 Release API、真实资产下载、签名、ZIP 与应用校验：\(prepared.manifest.version)")
+                print("PASS Release API、真实资产下载、签名、ZIP 与应用校验：\(prepared.manifest.version)")
                 semaphore.signal()
             } catch {
                 print("更新下载验证失败：\(error.localizedDescription)")

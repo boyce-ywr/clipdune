@@ -17,7 +17,7 @@
 ## 2. 本轮边界与证据等级
 
 - **已做**：首先调用 `web.run`；其返回空内容后，通过 `curl --proxy http://127.0.0.1:7897` 读取官方站点和固定版本官方源码。请求使用 5 秒连接超时、18–22 秒总超时；错误路径不反复等待。后台子任务独立核对 GitHub REST 契约。
-- **只用主源**：Sparkle 官方文档、Sparkle 2.10.0 源码、GitHub 官方 REST/认证文档、Apple 官方 API/签署文档。本轮未访问或复制 Clipbara 源文件。
+- **只用主源**：Sparkle 官方文档、Sparkle 2.10.0 源码、GitHub 官方 REST/认证文档、Apple 官方 API/签署文档。
 - **已读本项目初始快照**：`Package.swift:6` 声明 macOS 14；`scripts/build.sh:5` 使用 `swift build`，随后手工组装 `.app`，`:23` 使用 ad-hoc 签名。主线程在并行实现，本文不把初始快照当作最终代码状态。
 - **本机只读核验**：`xcode-select -p` 为 `/Library/Developer/CommandLineTools`；`swift --version` 为 Swift 6.4；`xcrun --find notarytool`、`xcrun --find stapler` 均返回 CLT 下路径。因此不能泛称“没有完整 Xcode 就没有这些公证工具”；工具存在也不等于拥有证书或公证已成功。
 - **未做**：未读取凭据、未调用目标私有仓库 API、未运行 `gh`、未发布 Release、未修改权限、未安装框架、未编译接入样例、未实际更新 App。除了本笔记，不写项目文件。
