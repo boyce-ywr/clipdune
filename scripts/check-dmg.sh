@@ -42,8 +42,13 @@ for executable in "$application/Contents/MacOS/ClipDune" "$application/Contents/
 done
 codesign --verify --deep --strict "$application"
 if [[ "$smoke" == --smoke && "$(uname -m)" == "$architecture" ]]; then
-    "$application/Contents/MacOS/ClipDune" --render-icon "$workspace/smoke.png"
-    [[ -s "$workspace/smoke.png" ]]
+    # 本机终端安全软件可能间歇终止未在白名单的 ad-hoc 程序；必须有一次真实启动并输出图标才通过
+    for attempt in 1 2 3; do
+        if "$application/Contents/MacOS/ClipDune" --render-icon "$workspace/smoke.png" && [[ -s "$workspace/smoke.png" ]]; then break; fi
+        if [[ "$attempt" == 3 ]]; then echo 'DMG 内应用启动检查连续 3 次失败。' >&2; exit 1; fi
+        printf '启动检查第 %s 次失败，5 秒后重试\n' "$attempt" >&2
+        sleep 5
+    done
     printf 'PASS DMG 内应用本机架构启动与图标渲染：%s\n' "$architecture"
 fi
 printf 'PASS DMG 挂载、应用版本、安装入口、签名与单架构校验：%s\n' "$architecture"
